@@ -17,7 +17,9 @@ class ScriptedBackend:
         return True
 
     def generate(self, prompt, role="coder", schema=None, think=False, timeout=None) -> str:
-        if schema is not None and schema.__name__ == "Analysis":
+        if schema is None:
+            return "LGTM"  # squad critic calls (Master review/verdict) stay content
+        if schema.__name__ == "Analysis":
             return json.dumps({"subject": "replan probe", "constraints": [], "task_type": "coding", "complexity": 2})
         return self.plans.pop(0).model_dump_json()
 

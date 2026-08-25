@@ -64,7 +64,9 @@ class PromptRecordingBackend:
 
     def generate(self, prompt, role="coder", schema=None, think=False, timeout=None, **kwargs) -> str:
         self.prompts.append(prompt)
-        if schema is not None and getattr(schema, "__name__", "") == "Analysis":
+        if schema is None:
+            return "LGTM"
+        if getattr(schema, "__name__", "") == "Analysis":
             return json.dumps({"subject": "probe", "constraints": [], "task_type": "coding", "complexity": 2})
         return ModelPlan(
             summary="probe plan",

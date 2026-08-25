@@ -13,6 +13,7 @@ from pydantic import Field
 
 from . import ABILITIES
 from .backend import Backend, OllamaBackend, get_backend
+from .commentary import Commentator
 from .executor import ActionExecutor, Approval
 from .memory import MemoryStore
 from .models import (
@@ -33,6 +34,7 @@ from .models import (
 from .policy import neutral_intent_contract, snapshot_workspace
 from .research import Researcher
 from .skills import SkillRegistry
+from .squad import MASTER, Squad, choose_form
 from .tasks import TaskStore
 
 
@@ -92,6 +94,8 @@ class Engine:
         self.memory = memory or MemoryStore(namespace=namespace)
         self.approve = approve
         self._sequence = 0
+        self._voice = Commentator(voice="off")
+        self._squad = Squad(helpers=[])
 
     def execute(
         self,
@@ -177,7 +181,28 @@ class Engine:
 
     def _run(self, task: TaskRecord, resume: bool = False) -> TaskRecord:
         task.status = TaskStatus.RUNNING
+        form = choose_form(task.request.mode, task.request.goal)
+        self._voice = Commentator(
+            backend=self.backend,
+            memory=self.memory,
+            voice=self.profile.voice if self.profile else "chatty",
+            speaker=form,
+        )
+        self._squad = Squad.muster(
+            task.request.goal,
+            self._complexity(task.request.goal),
+            bool(task.request.acceptance_checks),
+            task.request.mode,
+        )
         if task.snapshot is None:
+            self._say(task, "kickoff", goal=task.request.goal, form=form)
+            if self._squad.helpers:
+                self._emit(
+                    task,
+                    "voice",
+                    "walking with me: " + ", ".join(self._squad.helpers),
+                    {"moment": "muster", "speaker": form, "helpers": self._squad.helpers},
+                )
             self._phase(task, Phase.ANALYZE, "resolving goal, constraints, and dirty state")
             task.snapshot = snapshot_workspace(self.workspace)
             analysis = self._analyze(task)
@@ -204,6 +229,22 @@ class Engine:
                 "warnings": task.research.warnings if task.research else [],
             },
         )
+
+        if self._squad.lurker and task.research is not None and not resume:
+            brief = self._squad.lurker_brief(self.backend, task.request.goal, task.research.documentation)
+            if brief:
+                task.research.documentation = (task.research.documentation + "\n\nLURKER BRIEF:\n" + brief).strip()
+                self._emit(
+                    task,
+                    "voice",
+                    f"dug into the tight constraint; {len(brief.splitlines())} technique line(s) on the table",
+                    {"moment": "brief", "speaker": "Lurker"},
+                )
+                task.evidence.append({"kind": "lurker_brief", "chars": len(brief)})
+                self.task_store.save(task)
+
+        if task.request.mode == "answer":
+            return self._answer(task)
 
         if task.request.mode in {"inspect", "research"}:
             task.status = TaskStatus.COMPLETED
@@ -255,6 +296,23 @@ class Engine:
                         "options": [option.id for option in task.plan.options],
                     },
                 )
+                self._say(
+                    task,
+                    "approach",
+                    summary=task.plan.summary,
+                    actions=len(task.plan.actions),
+                    checks=len(task.plan.acceptance_checks),
+                    default=next(
+                        (option.title for option in task.plan.options if option.selected_by_default), ""
+                    ),
+                )
+                complaint = self._squad.master_review(self.backend, task.request.goal, task.plan.summary)
+                if complaint:
+                    self._emit(task, "voice", complaint, {"moment": "review", "speaker": MASTER})
+                    task.evidence.append({"kind": "master_review", "verdict": complaint})
+                    if complaint not in task.effective_constraints:
+                        task.effective_constraints.append(f"Master's concern: {complaint}")
+                    self.task_store.save(task)
             selection_error = self._option_selection_error(task)
             if selection_error:
                 task.status = TaskStatus.WAITING_APPROVAL
@@ -305,12 +363,45 @@ class Engine:
             task.check_results = self._run_checks(task, checks, deadline=deadline) if not blocking_failure else []
             self.task_store.save(task)
 
+            if self._squad.master:
+                checks_passed = sum(1 for item in task.check_results if item.status == ActionStatus.OK)
+                self._say(
+                    task,
+                    "progress",
+                    master=MASTER,
+                    attempt=task.attempt,
+                    actions_ok=sum(1 for item in results if item.status == ActionStatus.OK),
+                    actions_total=len(results),
+                    checks_passed=checks_passed,
+                    checks_total=len(checks),
+                    state=blocking_failure or "",
+                )
+
             self._phase(task, Phase.JUDGE_LOG, "independent deterministic judgment")
             success, failure = self._judge(task, checks, blocking_failure)
+            if success and self._squad.master:
+                verdict = self._squad.master_verdict(
+                    self.backend, task.request.goal, self._failure_context(task)
+                )
+                prior_verdicts = sum(1 for item in task.evidence if item.get("kind") == "master_verdict")
+                if verdict:
+                    self._emit(task, "voice", verdict, {"moment": "verdict", "speaker": MASTER})
+                    task.evidence.append({"kind": "master_verdict", "happy": False, "verdict": verdict})
+                    if prior_verdicts == 0 and task.attempt < max_attempts:
+                        success, failure = False, f"the Master is not happy: {verdict}"
+                else:
+                    task.evidence.append({"kind": "master_verdict", "happy": True})
+                    self._emit(task, "voice", "the Master is happy with this", {"moment": "verdict", "speaker": MASTER})
             if success:
                 task.status = TaskStatus.COMPLETED
                 task.failure = ""
                 task.evidence.append({"kind": "judgment", "verified": True, "checks": len(checks)})
+                self._say(
+                    task,
+                    "victory",
+                    checks=len(checks),
+                    paths=len({path for item in task.results for path in item.changed_paths}),
+                )
                 self._phase(task, Phase.LEARN, "recording at most one evidence-linked lesson")
                 task.lesson = self.memory.learn_from(task)
                 self.task_store.save(task)
@@ -318,6 +409,7 @@ class Engine:
                 return task
 
             task.failure = failure
+            self._say(task, "setback", reason=failure)
             task.status = TaskStatus.FAILED if checks else TaskStatus.UNVERIFIED
             task.evidence.append({"kind": "judgment", "verified": False, "reason": failure})
             self.task_store.save(task)
@@ -342,6 +434,53 @@ class Engine:
         self._emit(task, "error", task.failure or "task did not verify", self._result_payload(task))
         return task
 
+    def _say(self, task: TaskRecord, moment: str, **context: Any) -> None:
+        """Voice one moment through the commentator; silence is always safe."""
+
+        try:
+            line = self._voice.say(moment, **context)
+        except Exception:
+            return
+        if line:
+            self._emit(task, "voice", line, {"moment": moment, "speaker": self._voice.speaker})
+
+    def _record_model_stats(self, task: TaskRecord, role: str) -> None:
+        stats = getattr(self.backend, "last_stats", None)
+        if isinstance(stats, dict) and stats:
+            task.evidence.append({"kind": "model", "role": role, **stats})
+
+    def _answer(self, task: TaskRecord) -> TaskRecord:
+        """Answer mode: research happened; reply in prose, change nothing."""
+
+        self._phase(task, Phase.JUDGE_LOG, "composing a direct answer; no files change")
+        if not self.backend.available():
+            task.status = TaskStatus.UNVERIFIED
+            task.failure = "no local model is reachable to compose an answer"
+            self.task_store.save(task)
+            self._emit(task, "error", task.failure, self._result_payload(task))
+            return task
+        research = task.research or ResearchBundle()
+        reply = self.backend.generate(
+            f"QUESTION: {task.request.goal}\n"
+            f"WORKSPACE: {self.workspace}\n"
+            f"OPERATOR PREFERENCES: {json.dumps(self.memory.preference_lines())}\n"
+            f"LOCAL EVIDENCE:\n{research.local_context[:16_000]}\n"
+            f"DOCUMENTATION:\n{research.documentation[:8_000]}\n\n"
+            "Answer as the operator's capable partner: direct, concrete, under 250 "
+            "words, grounded in the evidence above. Recommend a next move when one "
+            "exists. Do not propose file edits — this is advice, not work.",
+            role="critic",
+            think=False,
+            timeout=min(300, task.request.timeout),
+        ).strip()
+        self._record_model_stats(task, "critic")
+        task.status = TaskStatus.COMPLETED
+        task.evidence.append({"kind": "answer", "verified": True, "text": reply[:4000]})
+        self._phase(task, Phase.LEARN, "no durable lesson promoted for advisory work")
+        self.task_store.save(task)
+        self._emit(task, "result", reply, {"answer": reply, **self._result_payload(task)})
+        return task
+
     def _analyze(self, task: TaskRecord) -> Analysis:
         fallback = Analysis(
             subject=" ".join(task.request.goal.split()[:6]),
@@ -357,6 +496,7 @@ class Engine:
         )
         try:
             raw = self.backend.generate(prompt, role="classifier", schema=Analysis, think=False, timeout=120)
+            self._record_model_stats(task, "classifier")
             return Analysis.model_validate_json(raw)
         except Exception as exc:
             task.evidence.append({"kind": "warning", "phase": "analyze", "message": str(exc)[:500]})
@@ -409,6 +549,7 @@ Rules:
 """.strip()
         role = "planner" if task.request.mode == "plan" or task.attempt > 1 or self._complexity(task.request.goal) >= 4 else "coder"
         raw = self.backend.generate(prompt, role=role, schema=ModelPlan, think=False, timeout=task.request.timeout)
+        self._record_model_stats(task, role)
         plan = ModelPlan.model_validate_json(raw)
         if task.request.mode == "implement" and not plan.acceptance_checks and not task.request.acceptance_checks:
             plan.acceptance_checks = self._infer_checks(plan)
