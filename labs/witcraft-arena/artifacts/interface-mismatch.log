@@ -1,0 +1,4 @@
+Error: artifacts/empty-component.wasm is not a capability-free witcraft:arena/arena-bot@0.1.0 component
+
+Caused by:
+    no exported instance named `witcraft:arena/bot@0.1.0`

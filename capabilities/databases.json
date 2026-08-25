@@ -1,0 +1,7 @@
+{
+  "name": "databases",
+  "tools": ["sqlite3", "psql", "redis-cli", "mysql"],
+  "hooks": ["sqlite3 --version", "redis-cli --version"],
+  "keywords": ["database", "sql", "sqlite", "postgres", "postgresql", "redis", "mysql", "db", "query", "migration"],
+  "note": "Database access, queries, and migrations."
+}

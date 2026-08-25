@@ -1,0 +1,294 @@
+{
+  "sha256": "d2bce7fa8ec508e3c64f6a7e74212e4da5f8b777da6576efacb98a04402b0444",
+  "replay": {
+    "schema": "witcraft.replay/v1",
+    "seed": 8,
+    "width": 17,
+    "height": 9,
+    "obstacles": [
+      {
+        "x": 1,
+        "y": 1
+      },
+      {
+        "x": 1,
+        "y": 2
+      },
+      {
+        "x": 1,
+        "y": 6
+      },
+      {
+        "x": 3,
+        "y": 7
+      },
+      {
+        "x": 7,
+        "y": 4
+      },
+      {
+        "x": 7,
+        "y": 7
+      },
+      {
+        "x": 8,
+        "y": 4
+      },
+      {
+        "x": 8,
+        "y": 7
+      },
+      {
+        "x": 10,
+        "y": 1
+      },
+      {
+        "x": 10,
+        "y": 2
+      },
+      {
+        "x": 10,
+        "y": 6
+      },
+      {
+        "x": 11,
+        "y": 3
+      },
+      {
+        "x": 11,
+        "y": 6
+      },
+      {
+        "x": 11,
+        "y": 7
+      },
+      {
+        "x": 12,
+        "y": 3
+      },
+      {
+        "x": 12,
+        "y": 5
+      },
+      {
+        "x": 15,
+        "y": 4
+      }
+    ],
+    "initial_relics": [
+      {
+        "x": 0,
+        "y": 8
+      },
+      {
+        "x": 3,
+        "y": 5
+      },
+      {
+        "x": 4,
+        "y": 6
+      },
+      {
+        "x": 6,
+        "y": 6
+      },
+      {
+        "x": 11,
+        "y": 4
+      }
+    ],
+    "initial_players": [
+      {
+        "name": "Greedy Gecko",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "score": 0,
+        "faults": 0
+      },
+      {
+        "name": "Memory Hog",
+        "position": {
+          "x": 16,
+          "y": 8
+        },
+        "score": 0,
+        "faults": 0
+      }
+    ],
+    "turns": [
+      {
+        "turn": 0,
+        "relics_before": [
+          {
+            "x": 0,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 5
+          },
+          {
+            "x": 4,
+            "y": 6
+          },
+          {
+            "x": 6,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Memory Hog",
+            "action": {
+              "kind": "hold"
+            },
+            "fuel_used": 574,
+            "error": "target/wasm32-wasip2/release/witcraft_memory_hog_fixture.wasm: error while executing at wasm backtrace:\n    0:   0x6463 - <unknown>!<wasm function 161>\n    1:   0x6f3d - <unknown>!<wasm function 163>\n    2:   0x648e - <unknown>!<wasm function 162>\n    3:   0x4e75 - <unknown>!<wasm function 108>: forcing trap when growing memory to 135331840 bytes"
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 0,
+              "y": 1
+            },
+            "score": 0,
+            "faults": 0
+          },
+          {
+            "name": "Memory Hog",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 1
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 0,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 5
+          },
+          {
+            "x": 4,
+            "y": 6
+          },
+          {
+            "x": 6,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 4
+          }
+        ]
+      },
+      {
+        "turn": 1,
+        "relics_before": [
+          {
+            "x": 0,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 5
+          },
+          {
+            "x": 4,
+            "y": 6
+          },
+          {
+            "x": 6,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Memory Hog",
+            "action": {
+              "kind": "hold"
+            },
+            "fuel_used": 0,
+            "error": "target/wasm32-wasip2/release/witcraft_memory_hog_fixture.wasm: wasm trap: cannot enter component instance"
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 0,
+              "y": 2
+            },
+            "score": 0,
+            "faults": 0
+          },
+          {
+            "name": "Memory Hog",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 2
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 0,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 5
+          },
+          {
+            "x": 4,
+            "y": 6
+          },
+          {
+            "x": 6,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 4
+          }
+        ]
+      }
+    ],
+    "winner": null
+  }
+}

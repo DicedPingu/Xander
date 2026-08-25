@@ -1,0 +1,7 @@
+{
+  "name": "web-development",
+  "tools": ["node", "npm", "npx"],
+  "hooks": ["node --version", "npm --version"],
+  "keywords": ["web", "html", "css", "js", "javascript", "react", "vue", "nextjs", "vite", "http", "server"],
+  "note": "Web development tools and runtime."
+}

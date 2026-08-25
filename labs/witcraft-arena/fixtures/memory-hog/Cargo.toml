@@ -1,0 +1,12 @@
+[package]
+name = "witcraft-memory-hog-fixture"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen.workspace = true
+

@@ -1,0 +1,7 @@
+{
+  "name": "flutter-development",
+  "tools": ["flutter", "dart"],
+  "hooks": ["flutter --version", "dart --version", "flutter devices"],
+  "keywords": ["flutter", "dart", "widget", "apk", "pubspec", "pub", "package", "ios", "android", "gradle"],
+  "note": "Flutter/Dart app development, building, and static analysis."
+}

@@ -1,0 +1,5224 @@
+{
+  "sha256": "71b63e393e0e674138f2e3237af1b57de5456c42f979f8cc0dd743a82a9868cd",
+  "replay": {
+    "schema": "witcraft.replay/v1",
+    "seed": 424242,
+    "width": 17,
+    "height": 9,
+    "obstacles": [
+      {
+        "x": 2,
+        "y": 3
+      },
+      {
+        "x": 2,
+        "y": 4
+      },
+      {
+        "x": 2,
+        "y": 7
+      },
+      {
+        "x": 3,
+        "y": 4
+      },
+      {
+        "x": 3,
+        "y": 5
+      },
+      {
+        "x": 3,
+        "y": 6
+      },
+      {
+        "x": 4,
+        "y": 6
+      },
+      {
+        "x": 5,
+        "y": 5
+      },
+      {
+        "x": 6,
+        "y": 2
+      },
+      {
+        "x": 6,
+        "y": 3
+      },
+      {
+        "x": 7,
+        "y": 3
+      },
+      {
+        "x": 7,
+        "y": 5
+      },
+      {
+        "x": 9,
+        "y": 5
+      },
+      {
+        "x": 9,
+        "y": 7
+      },
+      {
+        "x": 11,
+        "y": 4
+      },
+      {
+        "x": 14,
+        "y": 4
+      },
+      {
+        "x": 15,
+        "y": 2
+      }
+    ],
+    "initial_relics": [
+      {
+        "x": 0,
+        "y": 2
+      },
+      {
+        "x": 3,
+        "y": 7
+      },
+      {
+        "x": 6,
+        "y": 1
+      },
+      {
+        "x": 7,
+        "y": 8
+      },
+      {
+        "x": 14,
+        "y": 7
+      }
+    ],
+    "initial_players": [
+      {
+        "name": "Greedy Gecko",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "score": 0,
+        "faults": 0
+      },
+      {
+        "name": "Relic Ambusher",
+        "position": {
+          "x": 16,
+          "y": 8
+        },
+        "score": 0,
+        "faults": 0
+      }
+    ],
+    "turns": [
+      {
+        "turn": 0,
+        "relics_before": [
+          {
+            "x": 0,
+            "y": 2
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 0,
+              "y": 1
+            },
+            "score": 0,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 0,
+            "y": 2
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ]
+      },
+      {
+        "turn": 1,
+        "relics_before": [
+          {
+            "x": 0,
+            "y": 2
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 0,
+              "y": 2
+            },
+            "score": 10,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ]
+      },
+      {
+        "turn": 2,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 0,
+              "y": 3
+            },
+            "score": 10,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ]
+      },
+      {
+        "turn": 3,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 0,
+              "y": 4
+            },
+            "score": 10,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ]
+      },
+      {
+        "turn": 4,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 0,
+              "y": 5
+            },
+            "score": 10,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ]
+      },
+      {
+        "turn": 5,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 0,
+              "y": 6
+            },
+            "score": 10,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ]
+      },
+      {
+        "turn": 6,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 0,
+              "y": 7
+            },
+            "score": 10,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ]
+      },
+      {
+        "turn": 7,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1567
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 1,
+              "y": 7
+            },
+            "score": 10,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ]
+      },
+      {
+        "turn": 8,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 8
+          },
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 1,
+              "y": 8
+            },
+            "score": 20,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 9,
+        "relics_before": [
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1588
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 2,
+              "y": 8
+            },
+            "score": 20,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 10,
+        "relics_before": [
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1588
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 3,
+              "y": 8
+            },
+            "score": 20,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 11,
+        "relics_before": [
+          {
+            "x": 3,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1578
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 3,
+              "y": 7
+            },
+            "score": 30,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 12,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1574
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 4,
+              "y": 7
+            },
+            "score": 30,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 13,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1574
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 5,
+              "y": 7
+            },
+            "score": 30,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 14,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1581
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 6,
+              "y": 7
+            },
+            "score": 30,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 15,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1581
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 7,
+              "y": 7
+            },
+            "score": 30,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 16,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1576
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 7,
+              "y": 8
+            },
+            "score": 40,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 17,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1567
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 8,
+              "y": 8
+            },
+            "score": 40,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 18,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1581
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 9,
+              "y": 8
+            },
+            "score": 40,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 19,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1567
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 10,
+              "y": 8
+            },
+            "score": 40,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 20,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1574
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 11,
+              "y": 8
+            },
+            "score": 50,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 21,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1567
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 12,
+              "y": 8
+            },
+            "score": 50,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 22,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1567
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 13,
+              "y": 8
+            },
+            "score": 50,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 23,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1574
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 14,
+              "y": 8
+            },
+            "score": 50,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 24,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 14,
+            "y": 7
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1564
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 14,
+              "y": 7
+            },
+            "score": 60,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 25,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1574
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 15,
+              "y": 7
+            },
+            "score": 60,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 26,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 15,
+            "y": 5
+          },
+          {
+            "x": 15,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1564
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 15,
+              "y": 6
+            },
+            "score": 70,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 15,
+            "y": 5
+          }
+        ]
+      },
+      {
+        "turn": 27,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          },
+          {
+            "x": 15,
+            "y": 5
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1564
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 15,
+              "y": 5
+            },
+            "score": 80,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 6
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "turn": 28,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1564
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 15,
+              "y": 4
+            },
+            "score": 80,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 7
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "turn": 29,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1564
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 2098
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 15,
+              "y": 3
+            },
+            "score": 80,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "turn": 30,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1573
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2137
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 14,
+              "y": 3
+            },
+            "score": 80,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 15,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "turn": 31,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1564
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2137
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 14,
+              "y": 2
+            },
+            "score": 80,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 14,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "turn": 32,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1566
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2123
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 13,
+              "y": 2
+            },
+            "score": 80,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 13,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "turn": 33,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 13,
+            "y": 1
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1564
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2123
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 13,
+              "y": 1
+            },
+            "score": 90,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 12,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "turn": 34,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 11,
+            "y": 8
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1574
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2130
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 14,
+              "y": 1
+            },
+            "score": 90,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 11,
+              "y": 8
+            },
+            "score": 10,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "turn": 35,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          },
+          {
+            "x": 14,
+            "y": 0
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1564
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2123
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 14,
+              "y": 0
+            },
+            "score": 100,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 10,
+              "y": 8
+            },
+            "score": 10,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ]
+      },
+      {
+        "turn": 36,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1569
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2137
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 14,
+              "y": 1
+            },
+            "score": 100,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 9,
+              "y": 8
+            },
+            "score": 10,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ]
+      },
+      {
+        "turn": 37,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1569
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2123
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 14,
+              "y": 2
+            },
+            "score": 100,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 8,
+              "y": 8
+            },
+            "score": 10,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ]
+      },
+      {
+        "turn": 38,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1569
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2137
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 14,
+              "y": 3
+            },
+            "score": 100,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 7,
+              "y": 8
+            },
+            "score": 10,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ]
+      },
+      {
+        "turn": 39,
+        "relics_before": [
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1566
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2137
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 13,
+              "y": 3
+            },
+            "score": 100,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 8
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ]
+      },
+      {
+        "turn": 40,
+        "relics_before": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          },
+          {
+            "x": 13,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2112
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 13,
+              "y": 4
+            },
+            "score": 110,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 7
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 41,
+        "relics_before": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1566
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2112
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 12,
+              "y": 4
+            },
+            "score": 110,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 6
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 42,
+        "relics_before": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1851
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2112
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 12,
+              "y": 5
+            },
+            "score": 110,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 5
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 43,
+        "relics_before": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1573
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 2112
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 11,
+              "y": 5
+            },
+            "score": 110,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 44,
+        "relics_before": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1566
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 2332
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 10,
+              "y": 5
+            },
+            "score": 110,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 7,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 45,
+        "relics_before": [
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          },
+          {
+            "x": 10,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2342
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 10,
+              "y": 6
+            },
+            "score": 120,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 46,
+        "relics_before": [
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 9,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1580
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 2332
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 9,
+              "y": 6
+            },
+            "score": 130,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 7,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 47,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1566
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2342
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 8,
+              "y": 6
+            },
+            "score": 130,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 48,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1580
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 2332
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 7,
+              "y": 6
+            },
+            "score": 130,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 7,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 49,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1580
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2342
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 6,
+              "y": 6
+            },
+            "score": 130,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 50,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1573
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 2332
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 5,
+              "y": 6
+            },
+            "score": 130,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 7,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 51,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1722
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2342
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 5,
+              "y": 7
+            },
+            "score": 130,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 52,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1573
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 2332
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 4,
+              "y": 7
+            },
+            "score": 130,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 7,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 53,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1587
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2342
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 3,
+              "y": 7
+            },
+            "score": 130,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 54,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1682
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 2332
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 3,
+              "y": 8
+            },
+            "score": 130,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 7,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 55,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1587
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2342
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 2,
+              "y": 8
+            },
+            "score": 140,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 1
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 56,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 1
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 1656
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 2332
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 1,
+              "y": 8
+            },
+            "score": 140,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 7,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 1
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 57,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 1
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1557
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2342
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 1,
+              "y": 7
+            },
+            "score": 140,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 1
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ]
+      },
+      {
+        "turn": 58,
+        "relics_before": [
+          {
+            "x": 1,
+            "y": 6
+          },
+          {
+            "x": 2,
+            "y": 1
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "north"
+            },
+            "fuel_used": 1557
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 2332
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 1,
+              "y": 6
+            },
+            "score": 150,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 7,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 2,
+            "y": 1
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 6
+          }
+        ]
+      },
+      {
+        "turn": 59,
+        "relics_before": [
+          {
+            "x": 2,
+            "y": 1
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 6
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1588
+          },
+          {
+            "bot": "Relic Ambusher",
+            "action": {
+              "kind": "move",
+              "direction": "west"
+            },
+            "fuel_used": 2342
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 2,
+              "y": 6
+            },
+            "score": 150,
+            "faults": 0
+          },
+          {
+            "name": "Relic Ambusher",
+            "position": {
+              "x": 6,
+              "y": 4
+            },
+            "score": 20,
+            "faults": 0
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 2,
+            "y": 1
+          },
+          {
+            "x": 4,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 0
+          },
+          {
+            "x": 6,
+            "y": 1
+          },
+          {
+            "x": 6,
+            "y": 6
+          }
+        ]
+      }
+    ],
+    "winner": "Greedy Gecko"
+  }
+}

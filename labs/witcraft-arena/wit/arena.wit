@@ -1,0 +1,43 @@
+package witcraft:arena@0.1.0;
+
+interface bot {
+    record point {
+        x: u32,
+        y: u32,
+    }
+
+    enum direction {
+        north,
+        east,
+        south,
+        west,
+    }
+
+    variant action {
+        move(direction),
+        hold,
+    }
+
+    record player {
+        position: point,
+        score: u32,
+    }
+
+    record observation {
+        width: u32,
+        height: u32,
+        turn: u32,
+        self-index: u32,
+        players: list<player>,
+        obstacles: list<point>,
+        relics: list<point>,
+    }
+
+    name: func() -> string;
+    decide: func(state: observation) -> action;
+}
+
+world arena-bot {
+    export bot;
+}
+

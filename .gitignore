@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+build/
+dist/
+target/
+labs/**/target/
+*.xanderbundle
+
+# Runtime state and logs live under XDG paths at runtime; the copies here are
+# local working data, not source.
+state/
+logs/
+out/

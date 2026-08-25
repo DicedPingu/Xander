@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.28,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xander-agent"
+version = "1.0.0"
+description = "Offline-first local coding agent for humans, Codex, and Claude"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp==1.28.1",
+  "packaging>=26,<27",
+  "pydantic>=2.13,<3",
+  "textual==8.2.8",
+]
+
+[project.scripts]
+xander = "xander_agent.cli:entrypoint"
+xander-mcp = "xander_agent.mcp_server:entrypoint"
+
+[dependency-groups]
+dev = [
+  "pytest>=9,<10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["xander_agent"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]

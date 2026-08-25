@@ -1,0 +1,20 @@
+turn 1
++-----------------+
+|         *       |
+|1 ##      #      |
+|       #  ##     |
+|   #   # #    #  |
+|    #  #*        |
+|    ###          |
+|   *  ##         |
+| *           *  2|
+|                 |
++-----------------+
+1=Greedy Gecko score=0 faults=0
+2=Relic Ambusher score=0 faults=0
+WITcraft Arena replay: 1c1b054651f81c4ed1e746c696bf6e877e1031c453f3828c17304891b03fcf82
+  Greedy Gecko             score=0    faults=0
+  Relic Ambusher           score=0    faults=0
+winner: draw
+sandbox faults: 0
+replay: artifacts/playback-smoke.json

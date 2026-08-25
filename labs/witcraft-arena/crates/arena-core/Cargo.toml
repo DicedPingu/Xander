@@ -1,0 +1,11 @@
+[package]
+name = "witcraft-arena-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+

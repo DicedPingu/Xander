@@ -1,0 +1,379 @@
+{
+  "sha256": "87830219d038506b2b61867f572d894f83d27bd474148811b8672a3f847879b1",
+  "replay": {
+    "schema": "witcraft.replay/v1",
+    "seed": 7,
+    "width": 17,
+    "height": 9,
+    "obstacles": [
+      {
+        "x": 1,
+        "y": 4
+      },
+      {
+        "x": 1,
+        "y": 6
+      },
+      {
+        "x": 1,
+        "y": 7
+      },
+      {
+        "x": 3,
+        "y": 6
+      },
+      {
+        "x": 5,
+        "y": 7
+      },
+      {
+        "x": 6,
+        "y": 1
+      },
+      {
+        "x": 7,
+        "y": 1
+      },
+      {
+        "x": 7,
+        "y": 4
+      },
+      {
+        "x": 8,
+        "y": 4
+      },
+      {
+        "x": 8,
+        "y": 6
+      },
+      {
+        "x": 9,
+        "y": 3
+      },
+      {
+        "x": 9,
+        "y": 4
+      },
+      {
+        "x": 13,
+        "y": 4
+      },
+      {
+        "x": 13,
+        "y": 6
+      },
+      {
+        "x": 14,
+        "y": 1
+      },
+      {
+        "x": 14,
+        "y": 2
+      },
+      {
+        "x": 14,
+        "y": 3
+      }
+    ],
+    "initial_relics": [
+      {
+        "x": 5,
+        "y": 4
+      },
+      {
+        "x": 8,
+        "y": 1
+      },
+      {
+        "x": 12,
+        "y": 5
+      },
+      {
+        "x": 13,
+        "y": 3
+      },
+      {
+        "x": 15,
+        "y": 4
+      }
+    ],
+    "initial_players": [
+      {
+        "name": "Greedy Gecko",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "score": 0,
+        "faults": 0
+      },
+      {
+        "name": "Infinite Spinner",
+        "position": {
+          "x": 16,
+          "y": 8
+        },
+        "score": 0,
+        "faults": 0
+      }
+    ],
+    "turns": [
+      {
+        "turn": 0,
+        "relics_before": [
+          {
+            "x": 5,
+            "y": 4
+          },
+          {
+            "x": 8,
+            "y": 1
+          },
+          {
+            "x": 12,
+            "y": 5
+          },
+          {
+            "x": 13,
+            "y": 3
+          },
+          {
+            "x": 15,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1588
+          },
+          {
+            "bot": "Infinite Spinner",
+            "action": {
+              "kind": "hold"
+            },
+            "fuel_used": 100000,
+            "error": "target/wasm32-wasip2/release/witcraft_spinner_fixture.wasm: error while executing at wasm backtrace:\n    0:   0x4e5b - <unknown>!<wasm function 108>: wasm trap: all fuel consumed by WebAssembly"
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 1,
+              "y": 0
+            },
+            "score": 0,
+            "faults": 0
+          },
+          {
+            "name": "Infinite Spinner",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 1
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 5,
+            "y": 4
+          },
+          {
+            "x": 8,
+            "y": 1
+          },
+          {
+            "x": 12,
+            "y": 5
+          },
+          {
+            "x": 13,
+            "y": 3
+          },
+          {
+            "x": 15,
+            "y": 4
+          }
+        ]
+      },
+      {
+        "turn": 1,
+        "relics_before": [
+          {
+            "x": 5,
+            "y": 4
+          },
+          {
+            "x": 8,
+            "y": 1
+          },
+          {
+            "x": 12,
+            "y": 5
+          },
+          {
+            "x": 13,
+            "y": 3
+          },
+          {
+            "x": 15,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "east"
+            },
+            "fuel_used": 1567
+          },
+          {
+            "bot": "Infinite Spinner",
+            "action": {
+              "kind": "hold"
+            },
+            "fuel_used": 0,
+            "error": "target/wasm32-wasip2/release/witcraft_spinner_fixture.wasm: wasm trap: cannot enter component instance"
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 2,
+              "y": 0
+            },
+            "score": 0,
+            "faults": 0
+          },
+          {
+            "name": "Infinite Spinner",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 2
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 5,
+            "y": 4
+          },
+          {
+            "x": 8,
+            "y": 1
+          },
+          {
+            "x": 12,
+            "y": 5
+          },
+          {
+            "x": 13,
+            "y": 3
+          },
+          {
+            "x": 15,
+            "y": 4
+          }
+        ]
+      },
+      {
+        "turn": 2,
+        "relics_before": [
+          {
+            "x": 5,
+            "y": 4
+          },
+          {
+            "x": 8,
+            "y": 1
+          },
+          {
+            "x": 12,
+            "y": 5
+          },
+          {
+            "x": 13,
+            "y": 3
+          },
+          {
+            "x": 15,
+            "y": 4
+          }
+        ],
+        "decisions": [
+          {
+            "bot": "Greedy Gecko",
+            "action": {
+              "kind": "move",
+              "direction": "south"
+            },
+            "fuel_used": 1562
+          },
+          {
+            "bot": "Infinite Spinner",
+            "action": {
+              "kind": "hold"
+            },
+            "fuel_used": 0,
+            "error": "target/wasm32-wasip2/release/witcraft_spinner_fixture.wasm: wasm trap: cannot enter component instance"
+          }
+        ],
+        "players_after": [
+          {
+            "name": "Greedy Gecko",
+            "position": {
+              "x": 2,
+              "y": 1
+            },
+            "score": 0,
+            "faults": 0
+          },
+          {
+            "name": "Infinite Spinner",
+            "position": {
+              "x": 16,
+              "y": 8
+            },
+            "score": 0,
+            "faults": 3
+          }
+        ],
+        "relics_after": [
+          {
+            "x": 5,
+            "y": 4
+          },
+          {
+            "x": 8,
+            "y": 1
+          },
+          {
+            "x": 12,
+            "y": 5
+          },
+          {
+            "x": 13,
+            "y": 3
+          },
+          {
+            "x": 15,
+            "y": 4
+          }
+        ]
+      }
+    ],
+    "winner": null
+  }
+}
