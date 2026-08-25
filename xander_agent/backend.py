@@ -371,5 +371,164 @@ class UnavailableBackend:
         raise RuntimeError("no local LLM backend is reachable")
 
 
+CLOUD_PREFIX = "anthropic/"
+
+
+class AnthropicBackend:
+    """Optional Claude API brain behind the same generate() surface.
+
+    Routing values look like ``anthropic/claude-opus-5``; the prefix is
+    stripped before the call. The ``anthropic`` package is an optional
+    extra (``xander-agent[cloud]``) — without it, or without credentials,
+    this backend simply reports unavailable and Xander stays local.
+    """
+
+    name = "anthropic"
+
+    def __init__(self, *, models: dict[str, str] | None = None, default_model: str = "claude-opus-5") -> None:
+        self.models = {role: model.removeprefix(CLOUD_PREFIX) for role, model in (models or {}).items()}
+        self.default_model = default_model
+        self.last_stats: dict[str, Any] = {}
+        self.last_thinking = ""
+        self._client: Any = None
+
+    @staticmethod
+    def _has_credentials() -> bool:
+        if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+            return True
+        return (Path.home() / ".config" / "anthropic").exists()
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            import anthropic  # optional dependency: xander-agent[cloud]
+
+            self._client = anthropic.Anthropic()
+        return self._client
+
+    def available(self) -> bool:
+        if not self._has_credentials():
+            return False
+        try:
+            import anthropic  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    def doctor(self) -> dict[str, Any]:
+        return {
+            "available": self.available(),
+            "backend": self.name,
+            "routing": self.models,
+            "default_model": self.default_model,
+            "credentials": self._has_credentials(),
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        role: str = "coder",
+        system: str = "",
+        schema: type[BaseModel] | dict[str, Any] | None = None,
+        think: bool | str | None = None,
+        on_token: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        client = self._get_client()
+        model = self.models.get(role, self.default_model)
+        system_message = neutral_intent_contract()
+        if system.strip():
+            system_message += "\n" + system.strip()
+        request: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 16_000,
+            "system": system_message,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if schema is not None:
+            schema_value = schema.model_json_schema() if isinstance(schema, type) and issubclass(schema, BaseModel) else schema
+            request["output_config"] = {"format": {"type": "json_schema", "schema": schema_value}}
+        started = time.monotonic()
+        response = client.with_options(timeout=float(timeout or 600)).messages.create(**request)
+        if getattr(response, "stop_reason", "") == "refusal":
+            raise RuntimeError("the cloud model declined this request")
+        text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
+        usage = getattr(response, "usage", None)
+        tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        seconds = round(time.monotonic() - started, 3)
+        self.last_stats = {
+            "backend": self.name,
+            "model": model,
+            "tokens": tokens,
+            "seconds": seconds,
+            "tokens_per_second": round(tokens / seconds, 2) if seconds else 0.0,
+            "done_reason": str(getattr(response, "stop_reason", "")),
+        }
+        if on_token and text:
+            on_token(text)
+        return text.strip()
+
+
+class HybridBackend:
+    """Per-role dispatch: ``anthropic/``-prefixed roles go to the cloud,
+    the rest to local Ollama. Cloud failures fall back to local so a lost
+    network never strands a mission."""
+
+    name = "hybrid"
+
+    def __init__(
+        self,
+        models: dict[str, str],
+        *,
+        local: Any = None,
+        cloud: Any = None,
+    ) -> None:
+        cloud_models = {role: model for role, model in models.items() if model.startswith(CLOUD_PREFIX)}
+        local_models = {role: model for role, model in models.items() if not model.startswith(CLOUD_PREFIX)}
+        self.cloud_roles = set(cloud_models)
+        self.local = local if local is not None else OllamaBackend(models=local_models or None)
+        self.cloud = cloud if cloud is not None else AnthropicBackend(models=cloud_models)
+        self.last_stats: dict[str, Any] = {}
+        self.last_thinking = ""
+
+    def available(self) -> bool:
+        return self.local.available() or (bool(self.cloud_roles) and self.cloud.available())
+
+    def doctor(self) -> dict[str, Any]:
+        local_doctor = getattr(self.local, "doctor", lambda: {"available": self.local.available()})()
+        cloud_doctor = getattr(self.cloud, "doctor", lambda: {"available": self.cloud.available()})()
+        return {
+            "available": self.available(),
+            "backend": self.name,
+            "cloud_roles": sorted(self.cloud_roles),
+            "local": local_doctor,
+            "cloud": cloud_doctor,
+        }
+
+    def generate(self, prompt: str, *, role: str = "coder", **kwargs: Any) -> str:
+        use_cloud = role in self.cloud_roles and self.cloud.available()
+        target = self.cloud if use_cloud else self.local
+        try:
+            result = target.generate(prompt, role=role, **kwargs)
+        except Exception:
+            if use_cloud and self.local.available():
+                target = self.local
+                result = target.generate(prompt, role=role, **kwargs)
+            else:
+                raise
+        self.last_stats = dict(getattr(target, "last_stats", {}) or {})
+        self.last_thinking = str(getattr(target, "last_thinking", "") or "")
+        return result
+
+
+def backend_for(models: dict[str, str] | None = None) -> Backend:
+    """Pick the backend shape a routing table implies."""
+
+    models = models or {}
+    if any(value.startswith(CLOUD_PREFIX) for value in models.values()):
+        return HybridBackend(models)
+    return OllamaBackend(models=models or None)
+
+
 def get_backend() -> OllamaBackend:
     return OllamaBackend()

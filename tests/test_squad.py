@@ -43,7 +43,7 @@ def test_read_only_missions_walk_alone() -> None:
 @pytest.mark.parametrize(
     ("mode", "goal", "expected"),
     [
-        ("implement", "make the background green", "Smith"),
+        ("implement", "make the background green", "Xander"),
         ("implement", "fix the failing test in tests/", "Medic"),
         ("test-triage", "why is CI red", "Medic"),
         ("research", "how do wasm bundles shrink", "Lurker"),

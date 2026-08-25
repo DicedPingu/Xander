@@ -83,12 +83,17 @@ class VariantProfile(BaseModel):
     @field_validator("model_routing")
     @classmethod
     def only_abliterated_models(cls, value: dict[str, str]) -> dict[str, str]:
-        """Operator policy: route only to abliterated model builds."""
+        """Operator policy: local routes only to abliterated model builds.
+        ``anthropic/``-prefixed entries are cloud models and exempt."""
 
-        rejected = [model for model in value.values() if "abliterat" not in model.casefold()]
+        rejected = [
+            model
+            for model in value.values()
+            if not model.casefold().startswith("anthropic/") and "abliterat" not in model.casefold()
+        ]
         if rejected:
             raise ValueError(
-                "model routing only accepts abliterated builds; rejected: " + ", ".join(sorted(set(rejected)))
+                "local model routing only accepts abliterated builds; rejected: " + ", ".join(sorted(set(rejected)))
             )
         return value
 

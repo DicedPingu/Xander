@@ -11,9 +11,12 @@ Two helpers can muster for a mission, never more:
   constraint, and hands back one short brief of concrete techniques.
 
 Xander also *takes a form* per mission — a working persona that flavors his
-voice and states what kind of hands he is bringing:
+voice and states what kind of hands he is bringing. Building is his own
+trade, so on ordinary building missions he wears no costume at all: he is
+simply Xander.
 
-- **Smith** — the builder form, for missions that create or change things.
+- **Xander** — his own form: the builder, for missions that create or
+  change things.
 - **Medic** — the repair form, for failing tests, bugs, and triage.
 - **Lurker** — worn by Xander himself on read-only digging missions.
 - **Master** — worn for plan-only missions, where judging is the work.
@@ -32,7 +35,7 @@ MASTER = "Master"
 LURKER = "Lurker"
 
 FORMS: dict[str, str] = {
-    "Smith": "the builder — makes and changes things, proves them after",
+    "Xander": "his own form — the builder: makes and changes things, proves them after",
     "Medic": "the repairer — reproduces the failure first, then heals it",
     "Lurker": "the researcher — reads everything, touches nothing",
     "Master": "the judge — weighs plans and results, hard to please",
@@ -65,7 +68,7 @@ def choose_form(mode: str, goal: str) -> str:
         return "Lurker"
     if mode == "plan":
         return MASTER
-    return "Smith"
+    return "Xander"
 
 
 @dataclass
@@ -104,12 +107,23 @@ class Squad:
             return ""
         constraint = _BUDGET.search(goal)
         focus = constraint.group(0) if constraint else "the hardest part of this goal"
+        findings = ""
+        try:
+            import os
+
+            if not os.environ.get("XANDER_OFFLINE"):
+                from . import web
+
+                findings = web.digest(web.search(f"{goal} {focus}"))
+        except Exception:
+            findings = ""
         try:
             if not backend.available():
                 return ""
             brief = backend.generate(
                 f"GOAL: {goal}\n"
                 f"FOCUS: {focus}\n"
+                f"WEB FINDINGS:\n{findings[:2400]}\n"
                 f"KNOWN DOCUMENTATION:\n{documentation[:4000]}\n\n"
                 "List the 3-5 most concrete, immediately applicable techniques for "
                 "satisfying the FOCUS constraint in this goal. Terse bullet lines, "

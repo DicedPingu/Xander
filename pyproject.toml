@@ -14,6 +14,9 @@ dependencies = [
   "textual==8.2.8",
 ]
 
+[project.optional-dependencies]
+cloud = ["anthropic>=0.116"]
+
 [project.scripts]
 xander = "xander_agent.cli:entrypoint"
 xander-mcp = "xander_agent.mcp_server:entrypoint"

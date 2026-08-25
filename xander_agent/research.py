@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -102,6 +103,10 @@ class Researcher:
             for record in self.skills.search(query, limit=3)
         ]
         documentation, doc_sources, warnings = self._context7(query)
+        web_digest, web_sources = self._web_search(query)
+        if web_digest:
+            documentation = (documentation + "\n\nWeb findings:\n" + web_digest).strip()
+            doc_sources = [*doc_sources, *web_sources]
         mcp, mcp_warnings = self._mcp_inventory(query)
         warnings.extend(mcp_warnings)
         if mcp:
@@ -185,6 +190,21 @@ class Researcher:
             else:
                 warnings.append(f"Context7 docs failed for {library_id}")
         return "\n\n".join(sections), sources, warnings
+
+    def _web_search(self, query: str) -> tuple[str, list[str]]:
+        """Bounded online lookup; set XANDER_OFFLINE=1 to keep him home."""
+
+        if os.environ.get("XANDER_OFFLINE"):
+            return "", []
+        try:
+            from . import web
+
+            rows = web.search(query)
+        except Exception:
+            return "", []
+        if not rows:
+            return "", []
+        return web.digest(rows), [row["url"] for row in rows if row.get("url")][:6]
 
     @staticmethod
     def _library_id(text: str) -> str:
