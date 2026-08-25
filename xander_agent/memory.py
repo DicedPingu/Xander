@@ -42,10 +42,20 @@ def lessons_count(namespace: str = "default") -> int:
         return 0
 
 
+PREFERENCE_KINDS = ("like", "dislike", "style")
+PREFERENCE_SOURCES = ("explicit", "inferred")
+_MAX_PREFERENCES = 100
+
+
 class MemoryStore:
     def __init__(self, path: Path | None = None, namespace: str = "default") -> None:
         self.path = path or _memory_path(namespace)
-        self.data: dict[str, Any] = {"schema": "xander.memory/v1", "directives": [], "lessons": []}
+        self.data: dict[str, Any] = {
+            "schema": "xander.memory/v1",
+            "directives": [],
+            "lessons": [],
+            "preferences": [],
+        }
         self._load()
         if not self.data["directives"]:
             self.data["directives"] = [{"text": item, "created_at": utc_now()} for item in DEFAULT_DIRECTIVES]
@@ -59,6 +69,7 @@ class MemoryStore:
             if isinstance(loaded, dict):
                 self.data["directives"] = loaded.get("directives", [])
                 self.data["lessons"] = loaded.get("lessons", loaded.get("learnings", []))
+                self.data["preferences"] = loaded.get("preferences", [])
         except Exception:
             return
 
@@ -83,6 +94,62 @@ class MemoryStore:
         self.data["directives"].append({"text": text, "created_at": utc_now()})
         self._save()
         return True
+
+    def preferences(self) -> list[dict[str, Any]]:
+        return [item for item in self.data.get("preferences", []) if isinstance(item, dict)]
+
+    def add_preference(
+        self,
+        text: str,
+        *,
+        kind: str = "style",
+        source: str = "explicit",
+        weight: float = 1.0,
+    ) -> bool:
+        """Remember one standing operator like/dislike; repeats gain weight.
+
+        Explicit feedback always outranks anything inferred from behavior, so
+        an inferred repeat never downgrades the source of an explicit entry.
+        """
+
+        text = " ".join(text.split())
+        if not text or kind not in PREFERENCE_KINDS or source not in PREFERENCE_SOURCES:
+            return False
+        key = text.casefold()
+        for item in self.data["preferences"]:
+            if item.get("text", "").casefold() == key:
+                item["weight"] = round(min(5.0, float(item.get("weight", 1.0)) + 0.5), 2)
+                if source == "explicit":
+                    item["source"] = "explicit"
+                self._save()
+                return False
+        self.data["preferences"].append(
+            {
+                "text": text,
+                "kind": kind,
+                "source": source,
+                "weight": round(max(0.1, min(5.0, weight)), 2),
+                "created_at": utc_now(),
+            }
+        )
+        self.data["preferences"] = self.data["preferences"][-_MAX_PREFERENCES:]
+        self._save()
+        return True
+
+    def preference_lines(self, limit: int = 8) -> list[str]:
+        """The heaviest, freshest preferences as prompt-ready lines."""
+
+        rows = sorted(
+            self.preferences(),
+            key=lambda item: (float(item.get("weight", 1.0)), str(item.get("created_at", ""))),
+            reverse=True,
+        )
+        lines = []
+        for item in rows[:limit]:
+            text = str(item.get("text", "")).strip()
+            if text:
+                lines.append(f"[{item.get('kind', 'style')}] {text}")
+        return lines
 
     def relevant_lessons(self, goal: str, limit: int = 3) -> list[str]:
         words = {word for word in goal.lower().split() if len(word) > 3}

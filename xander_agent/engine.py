@@ -379,6 +379,7 @@ ALLOWED PATHS: {json.dumps(task.request.allowed_paths)}
 CONSTRAINTS: {json.dumps(task.effective_constraints)}
 STANDING DIRECTIVES: {json.dumps(self.memory.directives())}
 RELEVANT VERIFIED LESSONS: {json.dumps(lessons)}
+OPERATOR PREFERENCES: {json.dumps(self.memory.preference_lines())}
 FAILURE TO CORRECT: {failure}
 
 LOCAL EVIDENCE:
@@ -403,6 +404,7 @@ Rules:
 - If the operator asks for ideas or a choice, return exactly the requested number of typed options, declare prerequisites/conflicts, set selection_required, and mark one honest recommendation with selected_by_default. If they asked for suggestions only, do not attach mutating actions yet.
 - Write option titles and summaries in direct, natural language. Act like the operator's capable partner: make the tradeoffs concrete, recommend a next move, and avoid detached consultant filler.
 - Include at least one narrow deterministic acceptance check for implementation work.
+- OPERATOR PREFERENCES shape style, defaults, and phrasing; explicit CONSTRAINTS always outrank them.
 - Do not touch paths unrelated to the goal. Do not add dependencies or abstractions unless required.
 """.strip()
         role = "planner" if task.request.mode == "plan" or task.attempt > 1 or self._complexity(task.request.goal) >= 4 else "coder"

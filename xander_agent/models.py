@@ -152,7 +152,7 @@ class XanderRequest(StrictModel):
         default="xander.request/v1", alias="schema"
     )
     caller: Literal["human", "codex", "claude", "automation"] = "human"
-    mode: Literal["inspect", "research", "plan", "implement", "test-triage"]
+    mode: Literal["inspect", "research", "plan", "implement", "test-triage", "answer"]
     workspace: Path
     goal: str
     constraints: list[str] = Field(default_factory=list)
@@ -236,6 +236,7 @@ class XanderEvent(StrictModel):
         "approval",
         "result",
         "error",
+        "voice",
     ]
     timestamp: str = Field(default_factory=utc_now)
     phase: Phase | None = None

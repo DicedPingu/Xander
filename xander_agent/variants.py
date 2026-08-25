@@ -59,6 +59,7 @@ class VariantProfile(BaseModel):
     )
     skill_groups: list[str] = Field(default_factory=lambda: ["core-workflow", "code-quality"])
     autonomy: Literal["full-auto", "supervised", "proposal-only"] = "full-auto"
+    voice: Literal["chatty", "quiet", "off"] = "chatty"
     capabilities: list[str] = Field(default_factory=list)
     theme: str = "amber"
     directives: list[str] = Field(default_factory=list)

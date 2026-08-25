@@ -30,6 +30,7 @@ _STYLES: dict[str, tuple[str, str, str]] = {
     "approval": ("?", "bold yellow", "run"),
     "result": ("✓", "bold green", "run"),
     "error": ("✗", "bold red", "run"),
+    "voice": ("❝", "italic #f78c6c", "run"),
 }
 
 # mantra phase -> the ability Xander is leaning on right now
@@ -132,6 +133,9 @@ def _digest(event_type: str, data: dict[str, Any]) -> list[tuple[str, str]]:
             fields.append(("task", str(data["task_id"])))
         if data.get("status"):
             fields.append(("status", str(data["status"])))
+    elif event_type == "voice":
+        if data.get("moment"):
+            fields.append(("moment", str(data["moment"])))
     return fields
 
 
@@ -163,7 +167,10 @@ class Narrator:
 
         event_type = str(payload.get("type") or payload.get("event") or "action")
         glyph, style, channel = _STYLES.get(event_type, ("▸", "#ffcb6b", "run"))
-        message = _short(str(payload.get("message", "")), 160)
+        message = _short(str(payload.get("message", "")), 200 if event_type == "voice" else 160)
+        raw_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        if event_type == "voice" and raw_data.get("speaker"):
+            message = f"{_short(str(raw_data['speaker']), 24)} · {message}"
         phase = str(payload.get("phase") or "")
         ability = PHASE_ABILITY.get(phase, "")
         attempt = int(payload.get("attempt") or 0)
