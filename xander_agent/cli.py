@@ -34,7 +34,23 @@ from .variants import (
 )
 
 CLI_SCHEMA = "xander.cli/v1"
-_COMMANDS = {"run", "plan", "resume", "tasks", "doctor", "skills", "variant", "army", "stats", "mcp", "tui"}
+_COMMANDS = {
+    "run",
+    "plan",
+    "resume",
+    "tasks",
+    "doctor",
+    "skills",
+    "variant",
+    "army",
+    "stats",
+    "hooks",
+    "remote",
+    "web",
+    "serve",
+    "mcp",
+    "tui",
+}
 
 
 class InterfaceError(RuntimeError):
@@ -280,6 +296,11 @@ def build_parser() -> argparse.ArgumentParser:
     skill_search = skill_commands.add_parser("search")
     skill_search.add_argument("query")
     skill_commands.add_parser("doctor")
+    skill_create = skill_commands.add_parser("create", help="write a new skill of Xander's own")
+    skill_create.add_argument("name")
+    skill_create.add_argument("--description", required=True)
+    skill_create.add_argument("--body", help="skill body; omit to read from stdin")
+    skill_create.add_argument("--replace", action="store_true")
 
     variants = subparsers.add_parser("variant", help="clone and move versioned Xander profiles")
     variant_commands = variants.add_subparsers(dest="variant_command", required=True)
@@ -305,6 +326,45 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("army", help="muster the clone army: leader, ranks, lessons, wins")
 
     subparsers.add_parser("stats", help="the scoreboard: success rate, streaks, tokens, squad activity")
+
+    hooks = subparsers.add_parser("hooks", help="broad operator hooks, narrowed per mission")
+    hook_commands = hooks.add_subparsers(dest="hooks_command", required=True)
+    hook_commands.add_parser("list")
+    hook_add = hook_commands.add_parser("add")
+    hook_add.add_argument("--on", default="*", help="analyze|plan|test|victory|setback|*")
+    hook_add.add_argument("--match", default="", help="regex narrowing this hook to matching goals")
+    hook_add.add_argument("--constraint", default="", help="constraint to add to matching missions")
+    hook_add.add_argument("--note", default="", help="line to speak at the moment")
+    hook_narrow = hook_commands.add_parser("narrow", help="show which hooks a goal would arm")
+    hook_narrow.add_argument("goal", nargs="+")
+
+    remote = subparsers.add_parser("remote", help="MCP to MCP: use other MCP servers' tools")
+    remote_commands = remote.add_subparsers(dest="remote_command", required=True)
+    remote_commands.add_parser("list", help="configured remote MCP servers")
+    remote_add = remote_commands.add_parser("add")
+    remote_add.add_argument("name")
+    remote_add.add_argument("command", nargs="+")
+    remote_tools = remote_commands.add_parser("tools")
+    remote_tools.add_argument("server")
+    remote_call = remote_commands.add_parser("call")
+    remote_call.add_argument("server")
+    remote_call.add_argument("tool")
+    remote_call.add_argument("--arguments", default="{}", help="JSON object of tool arguments")
+
+    web_search = subparsers.add_parser("web", help="search online through Xander's providers")
+    web_search.add_argument("query", nargs="+")
+    web_search.add_argument(
+        "--provider",
+        action="append",
+        default=[],
+        help="duckduckgo|wikipedia|pypi|stackoverflow; repeatable",
+    )
+    web_search.add_argument("--fetch", help="fetch one URL as readable text instead of searching")
+
+    serve = subparsers.add_parser("serve", help="loopback HTTP bridge for a browser addon or script")
+    serve.add_argument("--port", type=int, default=8787)
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--origin", default="", help="allowed CORS origin, e.g. moz-extension://<id>")
 
     subparsers.add_parser("mcp", help="serve Xander tools over MCP stdio")
     subparsers.add_parser("tui", help="open the full-screen terminal interface")
@@ -350,6 +410,16 @@ def _skill_command(args: argparse.Namespace) -> Any:
     except ImportError as exc:
         raise InterfaceError("the skill registry is not installed") from exc
     command = args.skills_command
+    if command == "create":
+        registry_type = getattr(module, "SkillRegistry", None)
+        if registry_type is None:
+            raise InterfaceError("the skill registry is not installed")
+        body = args.body
+        if body is None:
+            body = sys.stdin.read()
+        return registry_type().author(
+            args.name, args.description, body, replace=args.replace
+        )
     direct = getattr(module, f"{command}_skills", None)
     if callable(direct):
         return direct(getattr(args, "query", None)) if command == "search" else direct()
@@ -435,6 +505,70 @@ def _run_command(args: argparse.Namespace, emit: Emitter) -> int:
             console = Console()
             for line in render_lines(payload):
                 console.print(line)
+        return 0
+    if args.command == "hooks":
+        from .hooks import HookBook
+
+        book = HookBook()
+        if args.hooks_command == "add":
+            hook = book.add(
+                on=args.on, match=args.match, constraint=args.constraint, note=args.note
+            )
+            result: Any = {"on": hook.on, "match": hook.match, "constraint": hook.constraint, "note": hook.note}
+        elif args.hooks_command == "narrow":
+            goal = " ".join(args.goal)
+            result = {
+                "goal": goal,
+                "constraints": book.constraints_for(goal),
+                "notes": book.notes_for(goal, "analyze"),
+            }
+        else:
+            result = [
+                {"on": hook.on, "match": hook.match, "constraint": hook.constraint, "note": hook.note}
+                for hook in book.hooks
+            ]
+        emit({"event": f"hooks.{args.hooks_command}", "result": result})
+        return 0
+    if args.command == "remote":
+        from .mcp_client import add_server, call_remote_tool, list_remote_tools, load_servers
+
+        if args.remote_command == "add":
+            add_server(args.name, list(args.command))
+            result = {"added": args.name, "command": list(args.command)}
+        elif args.remote_command == "tools":
+            result = list_remote_tools(args.server)
+        elif args.remote_command == "call":
+            try:
+                arguments = json.loads(args.arguments)
+            except json.JSONDecodeError as exc:
+                raise InterfaceError(f"--arguments must be a JSON object: {exc}") from exc
+            if not isinstance(arguments, dict):
+                raise InterfaceError("--arguments must be a JSON object")
+            result = {"output": call_remote_tool(args.server, args.tool, arguments)}
+        else:
+            result = load_servers()
+        emit({"event": f"remote.{args.remote_command}", "result": _serializable(result)})
+        return 0
+    if args.command == "web":
+        from . import web as web_module
+
+        if args.fetch:
+            emit({"event": "web.fetch", "result": {"url": args.fetch, "text": web_module.fetch_page(args.fetch)}})
+            return 0
+        providers = tuple(args.provider) if args.provider else ("duckduckgo", "wikipedia")
+        rows = web_module.search(" ".join(args.query), providers=providers)
+        emit({"event": "web.search", "result": rows})
+        return 0
+    if args.command == "serve":
+        from .bridge import serve as serve_bridge
+
+        serve_bridge(
+            workspace,
+            variant=args.variant,
+            host=args.host,
+            port=args.port,
+            origin=args.origin,
+        )
         return 0
     if args.command == "variant":
         command = args.variant_command

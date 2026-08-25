@@ -12,7 +12,7 @@ from typing import Any, Callable, Sequence
 from pydantic import Field
 
 from . import ABILITIES
-from .backend import Backend, OllamaBackend, get_backend
+from .backend import Backend, backend_for, get_backend
 from .commentary import Commentator
 from .executor import ActionExecutor, Approval
 from .memory import MemoryStore
@@ -68,6 +68,7 @@ class Engine:
         researcher: Researcher | None = None,
         memory: MemoryStore | None = None,
         approve: Approval | None = None,
+        hooks: Any = None,
     ) -> None:
         self.workspace = workspace.expanduser().resolve(strict=True)
         if not self.workspace.is_dir():
@@ -84,7 +85,7 @@ class Engine:
         if backend is not None:
             self.backend = backend
         elif self.profile is not None:
-            self.backend = OllamaBackend(models=self.profile.model_routing)
+            self.backend = backend_for(self.profile.model_routing)
         else:
             self.backend = get_backend()
         self.task_store = task_store or TaskStore()
@@ -93,6 +94,7 @@ class Engine:
         namespace = self.profile.memory_namespace if self.profile and self.profile.memory_namespace else variant
         self.memory = memory or MemoryStore(namespace=namespace)
         self.approve = approve
+        self.hooks = hooks
         self._sequence = 0
         self._voice = Commentator(voice="off")
         self._squad = Squad(helpers=[])
@@ -208,9 +210,19 @@ class Engine:
             analysis = self._analyze(task)
             task.subject = analysis.subject
             profile_directives = self.profile.directives if self.profile else []
+            hook_constraints, hook_notes = self._hooks_for(task)
             task.effective_constraints = list(
-                dict.fromkeys([*task.request.constraints, *profile_directives, *analysis.constraints])
+                dict.fromkeys(
+                    [
+                        *task.request.constraints,
+                        *profile_directives,
+                        *analysis.constraints,
+                        *hook_constraints,
+                    ]
+                )
             )
+            for note in hook_notes:
+                self._emit(task, "voice", note, {"moment": "hook", "speaker": form})
             task.evidence.append({"kind": "analysis", "task_type": analysis.task_type, "complexity": analysis.complexity})
             self.task_store.save(task)
 
@@ -433,6 +445,18 @@ class Engine:
         self.task_store.save(task)
         self._emit(task, "error", task.failure or "task did not verify", self._result_payload(task))
         return task
+
+    def _hooks_for(self, task: TaskRecord) -> tuple[list[str], list[str]]:
+        """Narrow the operator's broad hook book down to this mission."""
+
+        try:
+            from .hooks import HookBook
+
+            book = self.hooks if self.hooks is not None else HookBook()
+            goal = task.request.goal
+            return book.constraints_for(goal), book.notes_for(goal, "analyze")
+        except Exception:
+            return [], []
 
     def _say(self, task: TaskRecord, moment: str, **context: Any) -> None:
         """Voice one moment through the commentator; silence is always safe."""

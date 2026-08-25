@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -42,6 +43,25 @@ def _cache_db() -> Path:
         path = Path.home() / ".cache" / "xander" / "skills.sqlite3"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def authored_root() -> Path:
+    """Where skills Xander writes for himself live."""
+
+    override = os.environ.get("XANDER_AUTHORED_SKILLS")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".local" / "share" / "agent-skills" / "library" / "xander-authored"
+
+
+_SLUG = re.compile(r"[^a-z0-9-]+")
+
+
+def slugify(name: str) -> str:
+    slug = _SLUG.sub("-", name.strip().lower()).strip("-")[:48]
+    if not slug:
+        raise ValueError("a skill needs a name with at least one letter or digit")
+    return slug
 
 
 def skill_roots() -> list[Path]:
@@ -235,6 +255,55 @@ class SkillRegistry:
                 continue
             selected.append({"name": record["name"], "path": str(path), "content": content})
         return selected
+
+    # -- self-authoring --------------------------------------------------------
+    def author(
+        self,
+        name: str,
+        description: str,
+        body: str,
+        *,
+        root: Path | None = None,
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        """Write a new SKILL.md of Xander's own and index it immediately.
+
+        This is the ability to make abilities: whatever he learns the hard
+        way can become a skill the quartermaster hands out next time.
+        """
+
+        slug = slugify(name)
+        description = " ".join(description.split())[:2000]
+        if not description:
+            raise ValueError("a skill needs a description — it is what search matches on")
+        if not body.strip():
+            raise ValueError("a skill needs a body")
+        target = (root or authored_root()) / slug
+        skill_file = target / "SKILL.md"
+        if skill_file.exists() and not replace:
+            raise ValueError(f"skill already exists: {slug} (pass replace=True to overwrite)")
+        target.mkdir(parents=True, exist_ok=True)
+        document = (
+            "---\n"
+            f"name: {slug}\n"
+            f"description: {json.dumps(description)}\n"
+            "author: xander\n"
+            "---\n\n"
+            f"{body.strip()}\n"
+        )
+        skill_file.write_text(document, encoding="utf-8")
+        authored = target.parent
+        if authored not in self.roots and not any(
+            authored == existing or authored.is_relative_to(existing) for existing in self.roots
+        ):
+            self.roots.append(authored)
+        counts = self.refresh()
+        return {
+            "name": slug,
+            "path": str(skill_file),
+            "category": classify(slug, description),
+            "indexed": counts["indexed"],
+        }
 
     def doctor(self) -> dict[str, Any]:
         self.ensure()
