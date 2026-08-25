@@ -75,10 +75,11 @@ researcher is the **Lurker**, and Xander himself takes a *form* per mission.
   evidence: one unhappy verdict buys exactly one reshaped attempt, then the
   work stands with his dissent on record. The worker reports progress to
   him by name each attempt: "Master — attempt 2: 3/5 action(s) landed…".
-- **Forms Xander takes** (`choose_form`): **Smith** (builder — implement),
-  **Medic** (repairer — test-triage / fix-the-failing goals), **Lurker**
+- **Forms Xander takes** (`choose_form`): **Xander himself** (the builder —
+  implement missions; building is his own trade, so he wears no costume for
+  it), **Medic** (repairer — test-triage / fix-the-failing goals), **Lurker**
   (read-only digs and answers), **Master** (plan-only judging missions).
-  The form names the kickoff voice: "Taking Medic form for this one."
+  A costume names the kickoff voice: "Taking Medic form for this one."
 - All helper work is bounded (call caps + timeouts), best-effort, and
   narrated with a speaker tag in the voice event data (`{"speaker": name}`).
 
@@ -101,6 +102,37 @@ quiet 4 / off); setbacks, victories, questions, and acks always land.
   prompt injection, feedback/advice intent patterns, stats aggregation from
   fixture TaskRecords, squad muster heuristics (no model needed).
 
+## 6. Reach and self-extension (operator expansion, 2026-08-25)
+The second brief: *flexible enough to put a part of himself inside an addon;
+MCP to MCP; abilities to make abilities, skills to create skills; hooks that
+are flexible before they are narrowed; a lot of ways to search online.*
+
+- **Hybrid brain** (`backend.py`): `AnthropicBackend` (Claude API,
+  `claude-opus-5`) behind the same `generate()` surface; `HybridBackend`
+  routes per role — routing values prefixed `anthropic/` go to the cloud,
+  the rest to local Ollama, with fallback to local if the cloud fails.
+  `anthropic` is an optional extra (`xander-agent[cloud]`); offline-first
+  is unchanged. `VariantProfile` keeps abliterated-only for *local* models.
+- **Online abilities** (`web.py`): DuckDuckGo, Wikipedia, PyPI,
+  StackOverflow, page fetch. Stdlib only, timeout-bounded, empty on
+  failure. Wired into `Researcher` and the Lurker's brief.
+  `XANDER_OFFLINE=1` keeps him home (the test suite sets it).
+  CLI: `xander web <query> [--provider …] [--fetch URL]`.
+- **MCP to MCP** (`mcp_client.py`): he serves MCP and now calls it —
+  remote stdio servers declared in `mcp-servers.json`, isolated
+  timeout-bounded sessions. CLI: `xander remote add|list|tools|call`.
+- **Abilities that make abilities** (`skills.author()`): writes a real
+  `SKILL.md` into an authored root and reindexes it immediately.
+  CLI: `xander skills create NAME --description … [--body …|stdin]`.
+- **Flexible hooks** (`hooks.py`): declared broad (moment + optional match
+  pattern), narrowed at muster — only matching hooks arm; constraints join
+  the mission, notes are voiced at their moment. Never execute commands.
+  CLI: `xander hooks add|list|narrow`.
+- **A part of him outside the terminal** (`bridge.py`): `xander serve` —
+  loopback-only, bearer token (0600, config dir), CORS to one named
+  extension origin, `/health` `/stats` `/ask` `/note` `/order`. Orders are
+  **plan-only unless `apply: true`**. This is the Firefox-addon seam.
+
 ## Order of work (each step leaves the suite green)
 1. ✅ intents feedback/advice patterns + tests. (ae2d592)
 2. ✅ memory preferences + planner-prompt injection + tests. (14c2a96)
@@ -111,3 +143,7 @@ quiet 4 / off); setbacks, victories, questions, and acks always land.
 7. ✅ answer mode + TUI intent routing polish. (a363945, 4847553)
 
 All seven steps landed 2026-08-25; suite at 91 passed.
+
+Expansion (§6) landed the same day — ce0bf5e (hybrid brain, web abilities,
+form rename) and ec74e2e (hooks, MCP-to-MCP, skill authoring, bridge);
+suite at 122 passed.
