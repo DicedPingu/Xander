@@ -16,7 +16,7 @@ def test_tui_mounts_headlessly_and_exposes_the_complete_loop(tmp_path: Path) -> 
             phase_strip = str(app.query_one("#phase-strip", Static).render())
             for phase in MANTRA_PHASES:
                 assert phase in phase_strip
-            assert len(app.query(TabPane)) == 10
+            assert len(app.query(TabPane)) == 11
             context = str(app.query_one("#context-bar", Static).render())
             assert "variant:ambusher" in context
 
@@ -91,7 +91,7 @@ def test_tui_queues_orders_and_answers_questions(tmp_path: Path, monkeypatch: py
             # orders submitted while the engine is busy join the queue
             app.task_state = "running"
             app.on_input_submitted(Input.Submitted(goal_input, "second order"))
-            assert app._order_queue == ["second order"]
+            assert app._order_queue == [{"goal": "second order", "mode": "implement"}]
 
             # finishing the current run auto-starts the queued order
             app._finish({"ok": True, "status": "completed", "task_id": "t0", "task": {}, "handoff": {}})

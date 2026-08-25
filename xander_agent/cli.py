@@ -34,7 +34,7 @@ from .variants import (
 )
 
 CLI_SCHEMA = "xander.cli/v1"
-_COMMANDS = {"run", "plan", "resume", "tasks", "doctor", "skills", "variant", "army", "mcp", "tui"}
+_COMMANDS = {"run", "plan", "resume", "tasks", "doctor", "skills", "variant", "army", "stats", "mcp", "tui"}
 
 
 class InterfaceError(RuntimeError):
@@ -304,6 +304,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("army", help="muster the clone army: leader, ranks, lessons, wins")
 
+    subparsers.add_parser("stats", help="the scoreboard: success rate, streaks, tokens, squad activity")
+
     subparsers.add_parser("mcp", help="serve Xander tools over MCP stdio")
     subparsers.add_parser("tui", help="open the full-screen terminal interface")
     return parser
@@ -420,6 +422,19 @@ def _run_command(args: argparse.Namespace, emit: Emitter) -> int:
         return 0
     if args.command == "army":
         emit(army_payload())
+        return 0
+    if args.command == "stats":
+        from .stats import render_lines, stats_payload
+
+        payload = stats_payload()
+        if args.json:
+            emit(payload)
+        else:
+            from rich.console import Console
+
+            console = Console()
+            for line in render_lines(payload):
+                console.print(line)
         return 0
     if args.command == "variant":
         command = args.variant_command

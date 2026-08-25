@@ -8,6 +8,7 @@ feels like reading a good build log, not a JSON dump.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from textual.widgets import Footer, Header, Input, Label, RichLog, Static, Tabbe
 
 from . import MANTRA_PHASES
 from .cli import invoke_engine
+from .intents import Intent, MODE_HELP, MODE_REQUESTS, parse_intent, resolve_target
 from .narrator import Narrator, STATUS_GLYPHS, _short, abilities_line
 
 _PHASE_INDEXES = {
@@ -209,6 +211,8 @@ class XanderApp(App[None]):
                 yield RichLog(id="tests-log", wrap=True, highlight=False, markup=True)
             with TabPane("Tasks", id="tasks-view"):
                 yield RichLog(id="tasks-log", wrap=True, highlight=False, markup=True)
+            with TabPane("Stats", id="stats-view"):
+                yield RichLog(id="stats-log", wrap=True, highlight=False, markup=True)
             with TabPane("Skills", id="skills-view"):
                 yield RichLog(id="skills-log", wrap=True, highlight=False, markup=True)
             with TabPane("Variants", id="variants-view"):
@@ -226,6 +230,7 @@ class XanderApp(App[None]):
         run_log.write("[dim]Give me the outcome. I’ll show what I understood, do the work I can prove, and ask when direction matters.[/]")
         self._refresh_tasks()
         self._refresh_variants()
+        self._refresh_stats()
         self._load_skills_panel()
 
     # -- context strips -------------------------------------------------------
@@ -324,6 +329,15 @@ class XanderApp(App[None]):
             lines.append("[dim]recruit with: xander variant clone <name> --from <source>[/]")
         self._fill_log("#variants-log", lines)
 
+    def _refresh_stats(self) -> None:
+        try:
+            from .stats import render_lines, stats_payload
+
+            lines = render_lines(stats_payload())
+        except Exception as exc:
+            lines = [f"[red]stats unavailable: {escape(str(exc))}[/]"]
+        self._fill_log("#stats-log", lines)
+
     @work(thread=True, group="xander-meta")
     def _load_skills_panel(self) -> None:
         try:
@@ -365,16 +379,34 @@ class XanderApp(App[None]):
             )
             self._run_resume(task_id, [])
             return
+        intent = parse_intent(value)
+        goal_input = self.query_one("#goal-input", Input)
+        if intent.kind == "help":
+            goal_input.value = ""
+            self.action_help()
+            return
+        if intent.kind == "mode":
+            goal_input.value = ""
+            self._set_mode(intent.argument)
+            return
+        if intent.kind == "chdir":
+            goal_input.value = ""
+            self._rebind_workspace(intent)
+            return
+        if intent.kind == "feedback":
+            # Feedback lands immediately — even mid-run — and never queues as work.
+            goal_input.value = ""
+            self._record_feedback(value)
+            return
+        engine_mode = "answer" if intent.kind == "advice" else self.mode
         if self.task_state == "running" or self._engine_busy:
-            self._order_queue.append(value)
-            self.query_one("#goal-input", Input).value = ""
+            self._order_queue.append({"goal": value, "mode": engine_mode})
+            goal_input.value = ""
             self.query_one("#run-log", RichLog).write(
                 f"[dim]＋ queued order #{len(self._order_queue)}:[/] {escape(_short(value, 100))}"
             )
             return
-        self.goal = value
-        self.query_one("#goal-summary", Static).update(value)
-        self.action_run()
+        self._dispatch(value, engine_mode)
 
     def action_work(self) -> None:
         """The one command: focus the order line, ready for a task."""
@@ -433,20 +465,88 @@ class XanderApp(App[None]):
             self.query_one("#run-log", RichLog).write(
                 "[yellow]previous engine run is still winding down — order queued[/]"
             )
-            self._order_queue.append(goal)
+            self._order_queue.append({"goal": goal, "mode": self.mode})
             goal_input.value = ""
             return
+        self._dispatch(goal, self.mode)
+
+    def _dispatch(self, goal: str, engine_mode: str) -> None:
         self.goal = goal
         self._retry_task_id = None
         self.task_state = "running"
         self.phase_index = 0
-        self.query_one("#run-log", RichLog).write(f"[bold #ffcb6b]▶ order accepted[/] {escape(goal)}")
-        self._run_goal(goal)
+        self.query_one("#goal-summary", Static).update(goal)
+        marker = "answering" if engine_mode == "answer" else "order accepted"
+        self.query_one("#run-log", RichLog).write(f"[bold #ffcb6b]▶ {marker}[/] {escape(goal)}")
+        self._run_goal(goal, engine_mode)
+
+    def _set_mode(self, wheel: str) -> None:
+        run_log = self.query_one("#run-log", RichLog)
+        if wheel not in MODE_REQUESTS:
+            run_log.write(
+                "[yellow]modes:[/] "
+                + "   ".join(f"[bold]{name}[/] [dim]{MODE_HELP[name]}[/]" for name in MODE_REQUESTS)
+            )
+            return
+        engine_mode, autonomy = MODE_REQUESTS[wheel]
+        self.mode = engine_mode
+        self.autonomy = autonomy
+        self.query_one("#context-bar", Static).update(self._context_text())
+        run_log.write(f"[bold #ffcb6b]mode → {wheel}[/] [dim]{MODE_HELP[wheel]}[/]")
+
+    def _record_feedback(self, text: str) -> None:
+        run_log = self.query_one("#run-log", RichLog)
+        kind = "dislike"
+        if re.search(r"\b(?:like|love|prefer|always|more)\b", text, re.IGNORECASE) and not re.search(
+            r"\b(?:do\s*n[o']t\s+like|dislike|hate|never|stop|less)\b", text, re.IGNORECASE
+        ):
+            kind = "like"
+        try:
+            from .memory import MemoryStore
+
+            namespace = self.variant
+            try:
+                from .variants import load_variant
+
+                namespace = load_variant(self.variant).memory_namespace or self.variant
+            except Exception:
+                pass
+            MemoryStore(namespace=namespace).add_preference(text, kind=kind, source="explicit")
+            from .commentary import Commentator
+
+            line = Commentator(voice="quiet").say("feedback_ack", text=text)
+            run_log.write(f"[italic #f78c6c]❝ {escape(line)}[/]")
+            self.narrator.record(f"preference recorded ({kind}): {text}", task_id=self.task_id)
+        except Exception as exc:
+            run_log.write(f"[red]could not record that preference: {escape(str(exc))}[/]")
+
+    def _rebind_workspace(self, intent: Intent) -> None:
+        run_log = self.query_one("#run-log", RichLog)
+        if self.task_state == "running" or self._engine_busy:
+            run_log.write("[yellow]workspace stays put mid-run — I'll move after this task lands[/]")
+            return
+        target = resolve_target(intent.argument, self.workspace)
+        try:
+            if not target.exists() and intent.create:
+                target.mkdir(parents=True)
+            target = target.resolve(strict=True)
+        except OSError as exc:
+            run_log.write(f"[red]can't rebind the workspace: {escape(str(exc))}[/]")
+            return
+        if not target.is_dir():
+            run_log.write(f"[red]not a directory: {escape(str(target))}[/]")
+            return
+        self.workspace = target
+        self.narrator = Narrator(variant=self.variant, workspace=self.workspace)
+        self._branch, self._dirty_count = _repository_status(self.workspace)
+        self.query_one("#context-bar", Static).update(self._context_text())
+        run_log.write(f"[bold #ffcb6b]workspace →[/] {escape(str(target))}")
+        self._refresh_tasks()
 
     @work(thread=True, exclusive=True, group="xander-task")
-    def _run_goal(self, goal: str) -> None:
+    def _run_goal(self, goal: str, engine_mode: str | None = None) -> None:
         self._invoke_and_finish(
-            self.mode,
+            engine_mode or self.mode,
             goal=goal,
             autonomy=self.autonomy if self.caller == "human" else "proposal-only",
         )
@@ -525,6 +625,7 @@ class XanderApp(App[None]):
         for line in self.narrator.summarize(result):
             run_log.write(line)
         self._refresh_tasks()
+        self._refresh_stats()
         if self._order_queue:
             self._start_next_order()
         else:
@@ -555,15 +656,11 @@ class XanderApp(App[None]):
     def _start_next_order(self) -> None:
         if not self._order_queue or self.task_state == "running" or self._engine_busy:
             return
-        goal = self._order_queue.pop(0)
-        self._retry_task_id = None
+        entry = self._order_queue.pop(0)
+        if isinstance(entry, str):  # legacy plain-text queue entries
+            entry = {"goal": entry, "mode": self.mode}
         self.query_one("#run-log", RichLog).write(f"[dim]▶ next from queue ({len(self._order_queue)} left)[/]")
-        self.goal = goal
-        self.query_one("#goal-summary", Static).update(goal)
-        self.task_state = "running"
-        self.phase_index = 0
-        self.query_one("#run-log", RichLog).write(f"[bold #ffcb6b]▶ order accepted[/] {escape(goal)}")
-        self._run_goal(goal)
+        self._dispatch(str(entry["goal"]), str(entry.get("mode") or self.mode))
 
     def action_pause(self) -> None:
         workers = [worker for worker in self.workers if worker.group == "xander-task"]
