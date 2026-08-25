@@ -59,22 +59,36 @@ one supervising, one researching the tight constraint.
 - `XanderRequest.mode` Literal gains `"answer"`; engine branch after research.
 
 ## 5. `xander_agent/squad.py` — helper clones (NEW)
-- On implement-mode missions, `Squad.muster(goal, complexity, has_checks)`
-  picks ≤2 helpers; names come from real army clones (depth ≥1) when they
-  exist, else "scout" (researcher) and "overseer" (supervisor).
-- Scout: fires when complexity ≥3 or the goal carries a measurable budget
-  (regex e.g. "less than \d+ ?[KMG]?B", perf words). Runs in a background
-  thread during analyze/research: focused `Researcher.gather` on the
-  constraint + one critic-role call producing a ≤1200-char brief of concrete
-  techniques; joins (with timeout) before `_plan`; brief is appended to
-  `task.research.documentation` and voiced ("Scout is off checking how small
-  a tic-tac-toe page can get…").
-- Overseer: fires when the mission mutates and no acceptance checks came
-  from the operator. After each plan: one critic-role call — "single biggest
-  risk in ≤2 sentences or LGTM"; non-LGTM is voiced and joins that attempt's
-  constraints. Max twice per task.
+Canon (operator, 2026-08-25): the supervisor is the **Master**, the
+researcher is the **Lurker**, and Xander himself takes a *form* per mission.
+
+- `Squad.muster(goal, complexity, has_checks, mode)` picks ≤2 helpers.
+- **Lurker** (researcher): fires when complexity ≥3 or the goal carries a
+  measurable budget (regex e.g. "less than \d+ ?[KMG]?B", ms, seconds).
+  One bounded critic-role dig into the tight constraint → ≤1200-char brief
+  appended to `task.research.documentation`, voiced with his name.
+- **Master** (supervisor, "the one who does the judging++"): walks with
+  *every* mutating mission — he has to end up happy with the result, which
+  matters most exactly when the operator gave no real acceptance checks.
+  Bounded to 2 plan reviews per task; his concerns join the constraints.
+  After the deterministic judge passes, the Master weighs the finished
+  evidence: one unhappy verdict buys exactly one reshaped attempt, then the
+  work stands with his dissent on record. The worker reports progress to
+  him by name each attempt: "Master — attempt 2: 3/5 action(s) landed…".
+- **Forms Xander takes** (`choose_form`): **Smith** (builder — implement),
+  **Medic** (repairer — test-triage / fix-the-failing goals), **Lurker**
+  (read-only digs and answers), **Master** (plan-only judging missions).
+  The form names the kickoff voice: "Taking Medic form for this one."
 - All helper work is bounded (call caps + timeouts), best-effort, and
   narrated with a speaker tag in the voice event data (`{"speaker": name}`).
+
+### Voice canon
+Personality, but sparing: he says *how* he's building things (color,
+technique, file), states chosen defaults as "…, unless told otherwise",
+admits failures, and audibly **tires of repetitive failure** — fatigue
+builds per consecutive setback and resets on victory, pushing him to
+change the shape of the plan. Chatter is capped per task (chatty 10 /
+quiet 4 / off); setbacks, victories, questions, and acks always land.
 
 ## Cross-cutting edits
 - `models.py`: `"voice"` in XanderEvent.type; `"answer"` in XanderRequest.mode.
@@ -88,10 +102,12 @@ one supervising, one researching the tight constraint.
   fixture TaskRecords, squad muster heuristics (no model needed).
 
 ## Order of work (each step leaves the suite green)
-1. intents feedback/advice patterns + tests.
-2. memory preferences + planner-prompt injection + tests.
-3. models/narrator voice event + commentary.py with template fallback + tests.
-4. engine wiring (kickoff/approach/setback/victory) + model-call evidence.
-5. stats.py + CLI + TUI tab + tests.
-6. squad.py + engine wiring + tests.
-7. answer mode + TUI intent routing polish.
+1. ✅ intents feedback/advice patterns + tests. (ae2d592)
+2. ✅ memory preferences + planner-prompt injection + tests. (14c2a96)
+3. ✅ models/narrator voice event + commentary.py with template fallback + tests. (14c2a96)
+4. ✅ engine wiring (kickoff/approach/setback/victory/progress) + model-call evidence. (a363945)
+5. ✅ stats.py + CLI + TUI tab + tests. (4847553)
+6. ✅ squad.py (Master/Lurker + Smith/Medic forms) + engine wiring + tests. (a363945)
+7. ✅ answer mode + TUI intent routing polish. (a363945, 4847553)
+
+All seven steps landed 2026-08-25; suite at 91 passed.
