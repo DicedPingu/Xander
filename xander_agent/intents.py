@@ -37,7 +37,7 @@ MODE_REQUESTS: dict[str, tuple[str, str | None]] = {
 
 @dataclass(frozen=True)
 class Intent:
-    kind: str  # "chdir" | "mode" | "advice" | "order" | "help"
+    kind: str  # "chdir" | "mode" | "advice" | "order" | "help" | "feedback"
     argument: str = ""
     create: bool = False
 
@@ -54,6 +54,15 @@ _CREATE_HINT = re.compile(r"\b(?:called|named|new|create|make)\b", re.IGNORECASE
 _MODE_COMMAND = re.compile(r"^\s*/mode(?:\s+(?P<mode>[a-z-]+))?\s*$", re.IGNORECASE)
 _HELP_COMMAND = re.compile(r"^\s*/(?:help|how)\s*$", re.IGNORECASE)
 
+# Standing likes/dislikes about how Xander works or writes. These are
+# preferences to remember, not work orders — even when typed mid-run.
+_FEEDBACK_LEAD = re.compile(
+    r"^\s*(?:i\s+(?:really\s+)?(?:do\s*n[o']t\s+like|dislike|hate|like|love|prefer)|"
+    r"from\s+now\s+on|in\s+the\s+future|going\s+forward|"
+    r"always|never|stop\s+(?:doing|using|writing|adding)|"
+    r"please\s+(?:always|never|stop)|less\s+of|more\s+of)\b",
+    re.IGNORECASE,
+)
 _ADVICE_LEAD = re.compile(
     r"^\s*(?:give me|list|suggest|recommend|brainstorm|what|which|how|why|when|where|"
     r"explain|describe|summarize|compare|review|tell me|should|would|could|do you|can you|is it|are there)\b",
@@ -97,6 +106,8 @@ def parse_intent(text: str) -> Intent:
             argument=phrase_match.group("path"),
             create=bool(_CREATE_HINT.search(stripped)),
         )
+    if _FEEDBACK_LEAD.match(stripped) and not _MUTATION_ORDER.search(stripped):
+        return Intent(kind="feedback", argument=stripped)
     advisory = bool(_ADVICE_LEAD.match(stripped) or _ADVICE_ANY.search(stripped))
     if advisory and not _MUTATION_ORDER.search(stripped):
         return Intent(kind="advice", argument=stripped)
