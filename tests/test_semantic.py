@@ -110,3 +110,132 @@ def test_the_breaker_trips_below_the_attempt_limit() -> None:
     # Whatever the attempt budget is, three identical setbacks must end it,
     # otherwise the 12-attempt run in the bug report happens again.
     assert Engine.REPEATED_FAILURE_LIMIT <= 3
+
+
+# --- knowledge sources -------------------------------------------------------
+
+def test_abilities_are_grouped_exhaustively_and_without_overlap() -> None:
+    from xander_agent import ABILITIES, ABILITY_GROUPS
+
+    members = [name for group in ABILITY_GROUPS.values() for name in group]
+    assert sorted(members) == sorted(ABILITIES)
+    assert len(members) == len(set(members)), "an ability must belong to exactly one group"
+
+
+def test_ability_group_lookup() -> None:
+    from xander_agent import ability_group
+
+    assert ability_group("oracle") == "knowledge"
+    assert ability_group("quartermaster") == "gear"
+    assert ability_group("not-an-ability") == ""
+
+
+def test_github_provider_parses_a_search_payload() -> None:
+    import json as _json
+
+    from xander_agent import web
+
+    payload = _json.dumps(
+        {
+            "items": [
+                {
+                    "full_name": "owner/repo",
+                    "html_url": "https://github.com/owner/repo",
+                    "stargazers_count": 42,
+                    "pushed_at": "2026-08-30T12:00:00Z",
+                    "open_issues_count": 7,
+                    "license": {"spdx_id": "MIT"},
+                    "language": "Python",
+                    "description": "a thing",
+                }
+            ]
+        }
+    )
+    rows = web.github("thing", get=lambda url, timeout=8: payload)
+    assert rows[0]["title"] == "owner/repo"
+    assert rows[0]["provider"] == "github"
+    # Health numbers, not just a star count, so a stale repo is visible as stale.
+    for marker in ("42", "2026-08-30", "open-issues 7", "MIT"):
+        assert marker in rows[0]["snippet"]
+
+
+def test_github_provider_is_empty_when_the_network_fails() -> None:
+    from xander_agent import web
+
+    def boom(url: str, timeout: int = 8) -> str:
+        raise OSError("no network")
+
+    assert web.github("anything", get=boom) == []
+
+
+def test_github_code_needs_a_token(monkeypatch) -> None:
+    from xander_agent import web
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    assert web.github_code("anything") == []
+
+
+def test_github_readme_rejects_a_non_repo_string() -> None:
+    from xander_agent import web
+
+    assert web.github_readme("not-a-repo") == ""
+
+
+def test_github_is_registered_as_a_provider() -> None:
+    from xander_agent.web import PROVIDERS
+
+    assert "github" in PROVIDERS and "github_code" in PROVIDERS
+
+
+def test_abilities_are_grouped_without_gaps_or_strays() -> None:
+    from xander_agent import ABILITIES, ABILITY_GROUPS, ability_group
+
+    grouped = [name for members in ABILITY_GROUPS.values() for name in members]
+    assert sorted(grouped) == sorted(ABILITIES)
+    assert len(grouped) == len(set(grouped)), "an ability must belong to exactly one group"
+    assert ability_group("oracle") == "knowledge"
+    assert ability_group("not-an-ability") == ""
+
+
+def test_github_provider_parses_a_search_payload() -> None:
+    import json as _json
+
+    from xander_agent import web
+
+    payload = _json.dumps(
+        {
+            "items": [
+                {
+                    "full_name": "octo/thing",
+                    "html_url": "https://github.com/octo/thing",
+                    "stargazers_count": 12,
+                    "pushed_at": "2026-08-30T00:00:00Z",
+                    "open_issues_count": 3,
+                    "license": {"spdx_id": "MIT"},
+                    "language": "Python",
+                    "description": "does a thing",
+                }
+            ]
+        }
+    )
+    rows = web.github("thing", get=lambda url, timeout=8: payload)
+    assert rows[0]["title"] == "octo/thing"
+    assert rows[0]["provider"] == "github"
+    # Health signals, not just a star count, so a dead repo reads as dead.
+    assert "2026-08-30" in rows[0]["snippet"] and "MIT" in rows[0]["snippet"]
+
+
+def test_github_provider_is_empty_when_github_is_unreachable() -> None:
+    from xander_agent import web
+
+    def boom(url: str, timeout: int = 8) -> str:
+        raise OSError("no network")
+
+    assert web.github("thing", get=boom) == []
+
+
+def test_github_readme_needs_owner_slash_name() -> None:
+    from xander_agent import web
+
+    assert web.github_readme("not-a-repo") == ""

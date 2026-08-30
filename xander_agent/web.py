@@ -8,6 +8,8 @@ instead of raising when the world is unreachable. Providers:
 - ``wikipedia``   — encyclopedia lookup (opensearch JSON API)
 - ``pypi``        — Python package lookup (JSON API)
 - ``stackoverflow`` — Q&A search (StackExchange JSON API)
+- ``github``      — repository search (JSON API; reads GITHUB_TOKEN/GH_TOKEN if set)
+- ``github_code`` — code search across public repos (needs a token; empty without one)
 - ``fetch_page``  — pull one URL and strip it to readable text
 
 ``search()`` fans out across providers and folds everything into one
@@ -17,6 +19,7 @@ bounded, source-attributed digest for research or a Lurker brief.
 from __future__ import annotations
 
 import gzip
+import os
 import html
 import json
 import re
@@ -147,6 +150,127 @@ def stackoverflow(query: str, *, get: Fetcher = _http_get, limit: int = 3) -> li
     ]
 
 
+def _github_fetcher() -> Fetcher:
+    """GitHub unauthenticated is 10 searches/minute; a token makes it 30.
+
+    Xander should use the operator's token when there is one and still work
+    when there is not, so this returns a plain fetcher rather than failing.
+    """
+
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not token:
+        return _http_get
+
+    def get(url: str, timeout: int = _TIMEOUT) -> str:
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": _USER_AGENT,
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read(2_000_000).decode("utf-8", "replace")
+
+    return get
+
+
+def github(query: str, *, get: Fetcher | None = None, limit: int = _MAX_RESULTS) -> list[dict[str, str]]:
+    """Search repositories, best-starred first.
+
+    Stars are a weak signal and a stale one, so the snippet carries the numbers
+    that say whether a repo is actually alive — pushed date, open issues,
+    license — instead of leaving a ranking to be mistaken for a recommendation.
+    """
+
+    get = get or _github_fetcher()
+    try:
+        page = get(
+            "https://api.github.com/search/repositories?sort=stars&order=desc&per_page="
+            + str(limit)
+            + "&q="
+            + urllib.parse.quote_plus(query),
+            _TIMEOUT,
+        )
+        items = json.loads(page).get("items", [])
+    except Exception:
+        return []
+    rows = []
+    for item in items[:limit]:
+        licence = (item.get("license") or {}).get("spdx_id") or "no license"
+        rows.append(
+            {
+                "title": str(item.get("full_name", "?")),
+                "url": str(item.get("html_url", "")),
+                "snippet": (
+                    f"{item.get('stargazers_count', 0)}star "
+                    f"pushed {str(item.get('pushed_at', ''))[:10]} "
+                    f"open-issues {item.get('open_issues_count', 0)} "
+                    f"{licence} {item.get('language') or ''} "
+                    f"- {item.get('description') or ''}"
+                ).strip()[:400],
+                "provider": "github",
+            }
+        )
+    return rows
+
+
+def github_code(query: str, *, get: Fetcher | None = None, limit: int = 3) -> list[dict[str, str]]:
+    """Search code. GitHub requires auth here, so without a token this is empty."""
+
+    if not (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")):
+        return []
+    get = get or _github_fetcher()
+    try:
+        page = get(
+            "https://api.github.com/search/code?per_page="
+            + str(limit)
+            + "&q="
+            + urllib.parse.quote_plus(query),
+            _TIMEOUT,
+        )
+        items = json.loads(page).get("items", [])
+    except Exception:
+        return []
+    return [
+        {
+            "title": f"{(item.get('repository') or {}).get('full_name', '?')}: {item.get('path', '?')}",
+            "url": str(item.get("html_url", "")),
+            "snippet": str(item.get("path", ""))[:200],
+            "provider": "github_code",
+        }
+        for item in items[:limit]
+    ]
+
+
+def github_readme(repo: str, *, get: Fetcher | None = None, max_chars: int = _MAX_PAGE_CHARS) -> str:
+    """Read a repo's README as text. `repo` is "owner/name".
+
+    This is the step that turns a search hit into knowledge: a ranked list says
+    a repo exists, the README says whether it does what the task needs.
+    """
+
+    if "/" not in repo:
+        return ""
+    get = get or _github_fetcher()
+    for branch in ("HEAD",):
+        try:
+            page = get(f"https://api.github.com/repos/{repo}/readme", _TIMEOUT)
+            payload = json.loads(page)
+        except Exception:
+            return ""
+        content = payload.get("content") or ""
+        if payload.get("encoding") == "base64" and content:
+            import base64
+
+            try:
+                return base64.b64decode(content).decode("utf-8", "replace")[:max_chars]
+            except Exception:
+                return ""
+    return ""
+
+
 def fetch_page(url: str, *, get: Fetcher = _http_get, max_chars: int = _MAX_PAGE_CHARS) -> str:
     if not url.startswith(("http://", "https://")):
         return ""
@@ -161,6 +285,8 @@ PROVIDERS: dict[str, Callable[..., list[dict[str, str]]]] = {
     "wikipedia": wikipedia,
     "pypi": pypi,
     "stackoverflow": stackoverflow,
+    "github": github,
+    "github_code": github_code,
 }
 
 
