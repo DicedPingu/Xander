@@ -40,7 +40,7 @@ def _cache_db() -> Path:
 
         path = cache_dir() / "skills.sqlite3"
     except ImportError:
-        path = Path.home() / ".cache" / "xander" / "skills.sqlite3"
+        path = Path(__file__).resolve().parents[1] / "cache" / "skills.sqlite3"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -51,7 +51,9 @@ def authored_root() -> Path:
     override = os.environ.get("XANDER_AUTHORED_SKILLS")
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".local" / "share" / "agent-skills" / "library" / "xander-authored"
+    from .paths import agent_dir
+
+    return agent_dir() / "knowledge" / "skills" / "xander-authored"
 
 
 _SLUG = re.compile(r"[^a-z0-9-]+")
@@ -66,7 +68,11 @@ def slugify(name: str) -> str:
 
 def skill_roots() -> list[Path]:
     home = Path.home()
+    from .paths import agent_dir, shared_skills_dir
+
     roots = [
+        shared_skills_dir(),
+        agent_dir() / "knowledge" / "skills",
         home / ".local" / "share" / "agent-skills" / "library",
         home / ".agents" / "skills",
         home / ".codex" / "skills",
@@ -140,6 +146,7 @@ class SkillRegistry:
                 metadata = _frontmatter(text)
                 name = metadata.get("name") or skill_file.parent.name
                 description = metadata.get("description", "")[:2000]
+                declared_category = metadata.get("category", "")
                 tree_hash = whole_tree_hash(skill_file.parent)
                 key = (name, tree_hash)
                 provider = root.parent.name if root.name == "skills" else str(root)
@@ -148,8 +155,19 @@ class SkillRegistry:
                     {
                         "name": name,
                         "description": description,
-                        "triggers": " ".join(sorted(set(re.findall(r"[a-z0-9-]+", f"{name} {description}".lower())))),
-                        "category": classify(name, description),
+                        "triggers": " ".join(
+                            sorted(
+                                set(
+                                    re.findall(
+                                        r"[a-z0-9-]+",
+                                        f"{name} {description} {text[:16_000]}".lower(),
+                                    )
+                                )
+                            )
+                        ),
+                        "category": declared_category
+                        if declared_category in CATEGORY_KEYWORDS
+                        else classify(name, description),
                         "bucket": "daily" if name in DAILY_NAMES else "library",
                         "tree_hash": tree_hash,
                         "path": str(skill_file),
@@ -204,30 +222,89 @@ class SkillRegistry:
         if not self.database.exists():
             self.refresh()
 
-    def search(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
+    def _dense_ranking(self, connection: Any, query: str, pool: int) -> list[str]:
+        """Cosine ranking over stored card vectors. Empty when unavailable."""
+
+        from . import semantic
+
+        vectors = semantic.load_vectors(connection)
+        if not vectors:
+            return []
+        from .calibers import EMBEDDER
+
+        embedded = semantic.embed(
+            [query],
+            model=EMBEDDER,
+            base_url=os.environ.get("OLLAMA_API_BASE", "http://127.0.0.1:11434"),
+            timeout=30,
+        )
+        if not embedded:
+            return []
+        return [tree_hash for tree_hash, _ in semantic.rank(embedded[0], vectors)[:pool]]
+
+    def search(self, query: str, limit: int = 12, *, semantic_search: bool = True) -> list[dict[str, Any]]:
+        """Hybrid retrieval: BM25 and dense cosine, fused with RRF.
+
+        Dense is strictly additive. If nothing has been embedded yet, or the
+        embedder is unreachable, this returns exactly the BM25 result it always
+        did.
+        """
+
         self.ensure()
         tokens = re.findall(r"[a-z0-9-]+", query.lower())[:12]
-        if not tokens:
-            return []
-        expression = " OR ".join(f'"{token}"' for token in tokens)
+        limit = max(1, min(limit, 100))
+        pool = max(limit * 5, 50)
+
         with self._connect() as connection:
+            lexical: list[str] = []
+            if tokens:
+                expression = " OR ".join(f'"{token}"' for token in tokens)
+                lexical = [
+                    row["tree_hash"]
+                    for row in connection.execute(
+                        """
+                        SELECT s.tree_hash, bm25(skills_fts, 5.0, 2.0, 1.0, 0.5) AS score
+                        FROM skills_fts JOIN skills s ON s.id = skills_fts.rowid
+                        WHERE skills_fts MATCH ?
+                        ORDER BY score, CASE s.bucket WHEN 'daily' THEN 0 ELSE 1 END, s.name
+                        LIMIT ?
+                        """,
+                        (expression, pool),
+                    ).fetchall()
+                ]
+
+            dense: list[str] = []
+            if semantic_search and query.strip():
+                try:
+                    dense = self._dense_ranking(connection, query, pool)
+                except Exception:
+                    dense = []
+
+            if not lexical and not dense:
+                return []
+
+            from .semantic import fuse
+
+            order = fuse([r for r in (lexical, dense) if r]) if dense else lexical
+            wanted = order[:limit]
+            if not wanted:
+                return []
+            placeholders = ",".join("?" for _ in wanted)
             rows = connection.execute(
-                """
-                SELECT s.*, bm25(skills_fts, 5.0, 2.0, 1.0, 0.5) AS score
-                FROM skills_fts JOIN skills s ON s.id = skills_fts.rowid
-                WHERE skills_fts MATCH ?
-                ORDER BY score, CASE s.bucket WHEN 'daily' THEN 0 ELSE 1 END, s.name
-                LIMIT ?
-                """,
-                (expression, max(1, min(limit, 10))),
+                f"SELECT * FROM skills WHERE tree_hash IN ({placeholders})",
+                wanted,
             ).fetchall()
-        return [
-            {
-                **dict(row),
-                "providers": json.loads(row["providers"]),
-            }
-            for row in rows
-        ]
+
+        position = {tree_hash: index for index, tree_hash in enumerate(wanted)}
+        rows = sorted(rows, key=lambda row: (position.get(row["tree_hash"], len(wanted)), row["bucket"] != "daily", row["name"]))
+        seen: set[str] = set()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            if row["tree_hash"] in seen:
+                continue
+            seen.add(row["tree_hash"])
+            results.append({**dict(row), "providers": json.loads(row["providers"])})
+        return results[:limit]
 
     def list(self, limit: int = 100, bucket: str | None = None) -> list[dict[str, Any]]:
         self.ensure()
@@ -256,6 +333,84 @@ class SkillRegistry:
             selected.append({"name": record["name"], "path": str(path), "content": content})
         return selected
 
+    def assemble(
+        self,
+        query: str,
+        *,
+        preferred_groups: Iterable[str] = (),
+        context_budget: int = 18_000,
+        namespace: str = "default",
+    ) -> list[dict[str, str]]:
+        """Build layered gear by relevance and context cost, never a skill count.
+
+        One general workflow skill anchors every mission. Task matches then fill
+        the remaining context budget and retain their category as a research
+        hub. The number of skills is an outcome of relevance and size.
+        """
+
+        budget = max(2_000, context_budget)
+        query_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9-]+", query.casefold())
+            if len(token) > 3 and token not in {"folder", "good", "have", "here", "make", "working"}
+        }
+        preferred = set(preferred_groups)
+        candidates: list[dict[str, Any]] = []
+        daily = self.list(limit=100, bucket="daily")
+        anchor = next((item for item in daily if item["name"] == "complete-task-loop"), None)
+        if anchor:
+            candidates.append(anchor)
+        for item in self.search(query, limit=100):
+            experience_prefix = "xander-experience-"
+            if item["name"].startswith(experience_prefix) and not item["name"].startswith(
+                f"{experience_prefix}{slugify(namespace)}-"
+            ):
+                continue
+            words = set(
+                re.findall(
+                    r"[a-z0-9-]+",
+                    f"{item['name']} {item['description']} {item['category']} {item.get('triggers', '')}".casefold(),
+                )
+            )
+            overlap = len(query_tokens & words)
+            if not overlap and item["category"] not in preferred:
+                continue
+            item = {**item, "relevance": overlap + (1 if item["category"] in preferred else 0)}
+            candidates.append(item)
+        candidates.sort(
+            key=lambda item: (
+                item["name"] != "complete-task-loop",
+                -int(item.get("relevance", 0)),
+                item.get("score", 0),
+                item["name"],
+            )
+        )
+
+        selected: list[dict[str, str]] = []
+        seen: set[str] = set()
+        remaining = budget
+        for record in candidates:
+            key = str(record.get("tree_hash") or record["path"])
+            if key in seen or remaining < 500:
+                continue
+            try:
+                content = Path(record["path"]).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if not content.strip() or len(content) > remaining:
+                continue
+            selected.append(
+                {
+                    "name": str(record["name"]),
+                    "path": str(record["path"]),
+                    "content": content,
+                    "group": str(record.get("category") or "uncategorized"),
+                }
+            )
+            seen.add(key)
+            remaining -= len(content)
+        return selected
+
     # -- self-authoring --------------------------------------------------------
     def author(
         self,
@@ -263,6 +418,7 @@ class SkillRegistry:
         description: str,
         body: str,
         *,
+        category: str | None = None,
         root: Path | None = None,
         replace: bool = False,
     ) -> dict[str, Any]:
@@ -287,7 +443,8 @@ class SkillRegistry:
             "---\n"
             f"name: {slug}\n"
             f"description: {json.dumps(description)}\n"
-            "author: xander\n"
+            + (f"category: {category}\n" if category in CATEGORY_KEYWORDS else "")
+            + "author: xander\n"
             "---\n\n"
             f"{body.strip()}\n"
         )
@@ -301,9 +458,64 @@ class SkillRegistry:
         return {
             "name": slug,
             "path": str(skill_file),
-            "category": classify(slug, description),
+            "category": category if category in CATEGORY_KEYWORDS else classify(slug, description),
             "indexed": counts["indexed"],
         }
+
+    def record_experience(
+        self,
+        group: str,
+        lesson: str,
+        *,
+        namespace: str = "default",
+        root: Path | None = None,
+    ) -> dict[str, Any] | None:
+        """Fold one evidence-linked lesson into a reusable grouped skill hub."""
+
+        lesson = " ".join(lesson.split())[:800]
+        if not lesson:
+            return None
+        slug = slugify(f"xander-experience-{namespace}-{group or 'general'}")
+        target_root = root or authored_root()
+        skill_file = target_root / slug / "SKILL.md"
+        lessons: list[str] = []
+        if skill_file.exists():
+            try:
+                lessons = [
+                    line[2:].strip()
+                    for line in skill_file.read_text(encoding="utf-8", errors="replace").splitlines()
+                    if line.startswith("- ")
+                ]
+            except OSError:
+                lessons = []
+        if lesson.casefold() not in {item.casefold() for item in lessons}:
+            lessons.append(lesson)
+        lessons = lessons[-30:]
+        body = (
+            "# Evidence-linked experience hub\n\n"
+            "Use these observations as prior evidence, then verify them against the current workspace.\n\n"
+            + "\n".join(f"- {item}" for item in lessons)
+        )
+        return self.author(
+            slug,
+            f"Grouped evidence from the {namespace} clone's verified {group or 'general'} missions.",
+            body,
+            category=group if group in CATEGORY_KEYWORDS else None,
+            root=target_root,
+            replace=True,
+        )
+
+    def embed(self) -> dict[str, Any]:
+        """Build or top up the dense index. Safe to re-run; only new cards cost."""
+
+        from .calibers import EMBEDDER
+        from .semantic import backfill
+
+        return backfill(
+            self,
+            model=EMBEDDER,
+            base_url=os.environ.get("OLLAMA_API_BASE", "http://127.0.0.1:11434"),
+        )
 
     def doctor(self) -> dict[str, Any]:
         self.ensure()

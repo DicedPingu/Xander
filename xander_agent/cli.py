@@ -521,6 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
     skill_search = skill_commands.add_parser("search")
     skill_search.add_argument("query")
     skill_commands.add_parser("doctor")
+    skill_commands.add_parser("embed", help="build the dense index so search understands meaning, not just words")
     skill_create = skill_commands.add_parser("create", help="write a new skill of Xander's own")
     skill_create.add_argument("name")
     skill_create.add_argument("--description", required=True)
