@@ -37,7 +37,7 @@ MODE_REQUESTS: dict[str, tuple[str, str | None]] = {
 
 @dataclass(frozen=True)
 class Intent:
-    kind: str  # "chdir" | "mode" | "advice" | "order" | "help" | "feedback"
+    kind: str  # "chdir" | "mode" | "advice" | "order" | "help" | "feedback" | "selfwork"
     argument: str = ""
     create: bool = False
 
@@ -75,6 +75,17 @@ _ADVICE_ANY = re.compile(
     r"for\s+now,?\s+just\s+(?:talk|answer|explain))\b",
     re.IGNORECASE,
 )
+_CONVERSATION_LINE = re.compile(
+    r"^\s*(?:hi|hello|hey|thanks|thank you|good morning|good evening|"
+    r"let'?s talk|can we talk|i wonder|i'?m curious|what do you think)\b",
+    re.IGNORECASE,
+)
+_SELF_WORK = re.compile(
+    r"\b(?:improve|upgrade|fix|clean|optimi[sz]e|refactor)\s+yourself\b|"
+    r"\bresearch\s+your\s+soul\b|\bmake\s+yourself\s+more\s+capable\b|"
+    r"\b(?:improve|upgrade|fix|refactor)\s+xander(?:'s)?\b",
+    re.IGNORECASE,
+)
 # Verbs that flip an advisory-sounding line back into real work when they
 # clearly target an artifact ("how about you implement the parser in lib/").
 _MUTATION_ORDER = re.compile(
@@ -108,7 +119,14 @@ def parse_intent(text: str) -> Intent:
         )
     if _FEEDBACK_LEAD.match(stripped) and not _MUTATION_ORDER.search(stripped):
         return Intent(kind="feedback", argument=stripped)
-    advisory = bool(_ADVICE_LEAD.match(stripped) or _ADVICE_ANY.search(stripped))
+    if _SELF_WORK.search(stripped):
+        return Intent(kind="selfwork", argument=stripped)
+    advisory = bool(
+        stripped.endswith("?")
+        or _ADVICE_LEAD.match(stripped)
+        or _ADVICE_ANY.search(stripped)
+        or _CONVERSATION_LINE.match(stripped)
+    )
     if advisory and not _MUTATION_ORDER.search(stripped):
         return Intent(kind="advice", argument=stripped)
     return Intent(kind="order", argument=stripped)

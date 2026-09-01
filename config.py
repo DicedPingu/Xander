@@ -26,20 +26,37 @@ for _d in (LOG_DIR, STATE_DIR, TASK_DIR, OUT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Backend selection ────────────────────────────────────────────────────────
-# Xander speaks to whichever LLM backend is configured. "ornith" is the
-# operator's preferred backend; "ollama" is the always-available local default
-# and the fallback if the primary backend is unreachable.
-BACKEND = os.environ.get("XANDER_BACKEND", "ornith").lower()
+# Xander speaks to whichever LLM backend is configured. "ollama" is the
+# default: it is always up and every tier below is abliterated, so no call
+# gets refused. "ornith" stays selectable (XANDER_BACKEND=ornith) but that
+# service is not running and its model is refusal-trained — every run under it
+# just paid a failed connect and fell through to Ollama anyway.
+BACKEND = os.environ.get("XANDER_BACKEND", "ollama").lower()
 
 # ── Ollama (local default / fallback) ────────────────────────────────────────
 OLLAMA_URL = os.environ.get("OLLAMA_API_BASE", "http://127.0.0.1:11434").rstrip("/")
 
+# The legacy tier names below are aliases onto the shared caliber catalog in
+# `xander_agent/calibers.py`, so this stack and the package can no longer drift
+# apart on which build a role fires. The literals are a fallback for running
+# this module without the package importable.
+try:
+    from xander_agent.calibers import DEFAULT_MODELS as _ROUTING, EMBEDDER as _EMBEDDER
+except ImportError:  # pragma: no cover - legacy standalone use
+    _ROUTING = {
+        "coder": "huihui_ai/qwen2.5-coder-abliterate:7b",
+        "planner": "huihui_ai/qwen3-abliterated:8b",
+        "classifier": "huihui_ai/qwen2.5-vl-abliterated:3b-instruct-q8_0",
+        "critic": "huihui_ai/qwen3-abliterated:8b",
+    }
+    _EMBEDDER = "qwen3-embedding:0.6b"
+
 MODELS = {
-    "coder": "huihui_ai/qwen2.5-coder-abliterate:7b",  # precise edits, command synthesis
-    "thinker": "huihui_ai/qwen3-abliterated:8b",                        # planning, reasoning
-    "fast": "huihui_ai/qwen2.5-coder-abliterate:7b",                   # quick routing / classification
-    "vision": "huihui_ai/qwen2.5-vl-abliterated:3b",
-    "embed": "qwen3-embedding:0.6b",
+    "coder": _ROUTING["coder"],        # precise edits, command synthesis
+    "thinker": _ROUTING["planner"],    # planning, reasoning
+    "fast": _ROUTING["classifier"],    # quick routing / classification
+    "vision": _ROUTING["classifier"],  # the vision-capable build serves both
+    "embed": _EMBEDDER,                # vectors only; not wired into the engine yet
 }
 FALLBACK_MODELS = [MODELS["thinker"], MODELS["coder"], MODELS["fast"]]
 

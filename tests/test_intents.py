@@ -48,6 +48,9 @@ def test_orders_stay_orders(line: str) -> None:
         "what could be offsetting the wasm bundle size?",
         "should I use flexbox or grid here",
         "explain how the executor snapshots the workspace",
+        "hello Xander",
+        "I wonder what this repository is for",
+        "This looks unusual, right?",
     ],
 )
 def test_questions_are_advice(line: str) -> None:
@@ -58,3 +61,16 @@ def test_session_commands_still_route() -> None:
     assert parse_intent("/help").kind == "help"
     assert parse_intent("/mode plan").kind == "mode"
     assert parse_intent("cd ~/SPQR").kind == "chdir"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "take yourself some time to research your soul and improve yourself",
+        "upgrade yourself with better planning",
+        "make yourself more capable",
+        "fix Xander's retry loop",
+    ],
+)
+def test_explicit_self_work_is_routed_to_xander(line: str) -> None:
+    assert parse_intent(line).kind == "selfwork"

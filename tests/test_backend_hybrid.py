@@ -82,6 +82,14 @@ def test_anthropic_backend_is_unavailable_without_credentials(monkeypatch: pytes
     assert AnthropicBackend().available() is False
 
 
+def test_ollama_availability_accepts_a_tags_only_compatible_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = OllamaBackend()
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("version unavailable")))
+    monkeypatch.setattr(backend, "installed_models", lambda: ["huihui_ai/qwen3-abliterated:8b"])
+
+    assert backend.available() is True
+
+
 def test_the_cloud_prefix_is_stripped_from_routed_model_names() -> None:
     backend = AnthropicBackend(models={"critic": "anthropic/claude-opus-5"})
     assert backend.models["critic"] == "claude-opus-5"

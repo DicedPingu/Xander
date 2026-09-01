@@ -3,7 +3,7 @@
 Turns ``XanderEvent`` payloads into short, lively log lines — Monica's
 glyph-and-color voice adapted to a task loop whose shape changes per task.
 Each narrated line is also appended, markup-free, to plain session logs under
-Xander's state directory so a ``tail -f`` follows along outside the TUI.
+Xander's ASKAR folder so a ``tail -f`` follows along outside the TUI.
 """
 
 from __future__ import annotations
@@ -21,11 +21,14 @@ from . import ABILITIES
 # event type -> (glyph, rich style, channel)
 _STYLES: dict[str, tuple[str, str, str]] = {
     "task": ("◆", "bold #82aaff", "run"),
+    "guide": ("▱", "bold #89ddff", "plan"),
     "phase": ("»", "bold magenta", "run"),
     "plan": ("▤", "bold #c3e88d", "plan"),
     "research": ("·", "cyan", "research"),
+    "delegation": ("⇢", "bold #89ddff", "plan"),
     "action": ("▸", "#ffcb6b", "run"),
     "patch": ("±", "bold #c792ea", "diff"),
+    "logic_change": ("↻", "bold #f78c6c", "diff"),
     "test": ("⚑", "bold cyan", "tests"),
     "approval": ("?", "bold yellow", "run"),
     "result": ("✓", "bold green", "run"),
@@ -65,9 +68,9 @@ def _short(text: str, limit: int = _TAIL) -> str:
 
 
 def _log_dir() -> Path:
-    from .paths import state_dir
+    from .paths import logs_dir
 
-    path = state_dir() / "logs"
+    path = logs_dir()
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     return path
 
@@ -81,6 +84,15 @@ def _digest(event_type: str, data: dict[str, Any]) -> list[tuple[str, str]]:
             fields.append(("status", str(data["status"])))
         if data.get("workspace"):
             fields.append(("here", str(data["workspace"])))
+    elif event_type == "guide":
+        guide = data.get("guide") if isinstance(data.get("guide"), dict) else {}
+        if guide.get("progress"):
+            fields.append(("progress", str(guide["progress"])))
+        if guide.get("current"):
+            fields.append(("current", _short(str(guide["current"]), 110)))
+        questions = guide.get("questions") or []
+        if questions:
+            fields.append(("question", _short(str(questions[0]), 110)))
     elif event_type == "plan":
         fields.append(("actions", str(data.get("actions", 0))))
         fields.append(("checks", str(data.get("checks", 0))))
@@ -99,7 +111,26 @@ def _digest(event_type: str, data: dict[str, Any]) -> list[tuple[str, str]]:
         warnings = data.get("warnings") or []
         if warnings:
             fields.append(("warning", _short(str(warnings[0]), 100)))
-    elif event_type in {"action", "patch", "test"}:
+    elif event_type == "delegation":
+        if data.get("agent"):
+            fields.append(("agent", _short(str(data["agent"]), 32)))
+        if data.get("role"):
+            fields.append(("role", _short(str(data["role"]), 32)))
+        if data.get("operation"):
+            fields.append(("work", _short(str(data["operation"]), 72)))
+        if data.get("model"):
+            fields.append(("model", _short(str(data["model"]), 72)))
+        if data.get("delegates"):
+            fields.append(("delegates", ",".join(str(item) for item in data["delegates"][:4])))
+        if data.get("status"):
+            fields.append(("status", _short(str(data["status"]), 32)))
+        if data.get("outcome"):
+            fields.append(("outcome", _short(str(data["outcome"]), 32)))
+        if data.get("reason"):
+            fields.append(("why", _short(str(data["reason"]), 110)))
+        if data.get("error"):
+            fields.append(("error", _short(str(data["error"]), 110)))
+    elif event_type in {"action", "patch", "logic_change", "test"}:
         result = data.get("result")
         if isinstance(result, dict):
             if result.get("returncode") is not None:
@@ -120,6 +151,10 @@ def _digest(event_type: str, data: dict[str, Any]) -> list[tuple[str, str]]:
             fields.append(("risk", str(action["risk"])))
         if event_type == "test" and data.get("name"):
             fields.insert(0, ("check", _short(str(data["name"]), 40)))
+        if event_type == "logic_change":
+            reason = data.get("reason")
+            if reason:
+                fields.insert(0, ("why", _short(str(reason), 100)))
     elif event_type == "approval":
         options = data.get("options") or []
         if options:
@@ -194,9 +229,13 @@ class Narrator:
             parts.append(f"[dim]| {rendered}[/]")
         line = " ".join(part for part in parts if part)
 
-        plain_fields = "".join(f" {key}={value}" for key, value in fields)
-        prefix = f"{phase}:" if phase else ""
-        self._write_plain(f"[{event_type.upper()}] {prefix}{message}{plain_fields}", task_id=run_id)
+        from .eventlog import quick_event_text
+
+        # `phase` lives on the payload, not inside `data`; without it the quick
+        # log renders every phase as the generic "working".
+        quick_line = quick_event_text(event_type, message, {"phase": phase, **data} if phase else data)
+        if quick_line:
+            self._write_plain(quick_line, task_id=run_id)
         return channel, line
 
     def summarize(self, result: dict[str, Any]) -> list[str]:
@@ -246,6 +285,9 @@ class Narrator:
 
     def record(self, message: str, *, task_id: str = "") -> None:
         self._write_plain(f"[GUIDANCE] {_short(message, 500)}", task_id=task_id)
+
+    def record_chat(self, speaker: str, message: str) -> None:
+        self._write_plain(f"[CHAT] {_short(speaker, 40)}: {_short(message, 2_000)}")
 
     # -- plain file twin -----------------------------------------------------
     def _write_plain(self, body: str, *, task_id: str = "") -> None:

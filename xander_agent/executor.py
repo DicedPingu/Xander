@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import signal
@@ -324,6 +326,16 @@ class ActionExecutor:
     ) -> ActionResult:
         return ActionResult(
             action_id=action.id,
+            action_hash=hashlib.sha256(
+                json.dumps(
+                    {
+                        key: value
+                        for key, value in action.model_dump(mode="json").items()
+                        if key != "id"
+                    },
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest(),
             status=status,
             returncode=returncode,
             stdout=stdout,

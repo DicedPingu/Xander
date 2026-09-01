@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
@@ -217,7 +218,7 @@ class Engine:
                     step.evidence = ""
                 task.guide.current = "Mission reopened; looking for the next improvement."
                 task.guide.progress = f"0/{len(task.guide.todo)} complete"
-                task.guide.questions = ["What should be better when this Mission is finished again?"]
+                task.guide.questions = []
                 task.guide.result = ""
                 task.guide.updated_at = utc_now()
         if selected_options:
@@ -442,6 +443,8 @@ class Engine:
         reuse_existing_plan = resume and task.plan is not None
         planning_failure = ""
         repeated_failures: dict[str, int] = {}
+        discovery_hashes: set[str] = set()
+        discovery_rounds = 0
         while task.attempt < attempt_limit:
             if time.monotonic() >= deadline:
                 task.failure = f"work budget exhausted after approximately {budget} seconds"
@@ -552,19 +555,84 @@ class Engine:
                 self._emit(task, "result", "proposal ready", self._result_payload(task))
                 return task
 
-            lint_failure = self._lint_plan(task.plan)
-            if lint_failure:
-                results = []
-                blocking_failure = lint_failure
+            discovery_only = task.request.mode == "implement" and self._is_discovery_plan(task.plan)
+            lint_failure = ""
+            if discovery_only and discovery_rounds < self.MAX_DISCOVERY_ROUNDS:
+                discovery_hash = self._plan_hash(task.plan)
+                if discovery_hash in discovery_hashes:
+                    lint_failure = "invalid plan: planner repeated the same discovery slice"
+                else:
+                    discovery_hashes.add(discovery_hash)
+                    lint_failure = self._lint_plan(task.plan)
+                if lint_failure:
+                    results = []
+                    blocking_failure = lint_failure
+                else:
+                    results = self._execute_actions(task, completed_fingerprints, only_inspect=True)
+                    task.results.extend(results)
+                    completed_fingerprints.update(
+                        result.action_hash
+                        for result in results
+                        if result.status == ActionStatus.OK and result.action_hash
+                    )
+                    blocking_failure = self._blocking_failure(task, results)
+                    if not blocking_failure:
+                        discovery_rounds += 1
+                        task.evidence.append(
+                            {
+                                "kind": "discovery",
+                                "round": discovery_rounds,
+                                "actions": len(results),
+                                "plan_hash": discovery_hash,
+                            }
+                        )
+                        self._emit(
+                            task,
+                            "research",
+                            "discovery slice complete; shaping the implementation from its evidence",
+                            {"actions": len(results), "round": discovery_rounds},
+                        )
+                        self._phase(
+                            task,
+                            Phase.REPEAT,
+                            "discovery complete; choose the change and proof from the inspected evidence",
+                        )
+                        planning_failure = (
+                            "DISCOVERY COMPLETE. The inspection results are in PRIOR ACTION EVIDENCE. "
+                            "Now return the implementation actions and required acceptance checks; "
+                            "do not repeat discovery."
+                        )
+                        task.plan = None
+                        task.check_results = []
+                        reuse_existing_plan = False
+                        self.task_store.save(task)
+                        continue
             else:
-                results = self._execute_actions(task, completed_fingerprints)
-                task.results.extend(results)
-                completed_fingerprints.update(
-                    result.action_hash
-                    for result in results
-                    if result.status == ActionStatus.OK and result.action_hash
+                lint_failure = self._lint_plan(
+                    task.plan,
+                    require_execution=task.request.mode == "implement",
+                    require_checks=(
+                        task.request.mode == "implement"
+                        and not task.request.acceptance_checks
+                    ),
                 )
-                blocking_failure = self._blocking_failure(task, results)
+                if discovery_only and discovery_rounds >= self.MAX_DISCOVERY_ROUNDS:
+                    lint_failure = (
+                        "invalid plan: discovery budget exhausted; the next plan must make the "
+                        "selected change and include deterministic proof"
+                    )
+                if lint_failure:
+                    results = []
+                    blocking_failure = lint_failure
+                else:
+                    results = self._execute_actions(task, completed_fingerprints)
+                    task.results.extend(results)
+                    completed_fingerprints.update(
+                        result.action_hash
+                        for result in results
+                        if result.status == ActionStatus.OK and result.action_hash
+                    )
+                    blocking_failure = self._blocking_failure(task, results)
             self.task_store.save(task)
 
             self._phase(task, Phase.TEST, "running explicit acceptance checks")
@@ -953,7 +1021,7 @@ Rules:
 - Return only the schema.
 - Every action is something the executor can perform, not a prose step or future intention.
 - Return at most 6 materially executable actions. Prefer a few complete file actions over many setup or placeholder steps.
-- For implement mode, include a real PATCH or CREATE mutation before any test or validation command. Do not spend the action budget running tests against the unchanged starter.
+- If local evidence is insufficient to choose a safe edit, return one bounded discovery slice containing only INSPECT/NOTE actions. The engine will return their output once. Otherwise, for implement mode include the real PATCH, CREATE, COMMAND, or PIPELINE change before validation. Never return an empty plan or a second discovery slice.
 - Acceptance checks supplied by the operator are run by the engine after mutations; do not duplicate them as work actions unless a changed-state diagnostic is genuinely needed.
 - Use inspect actions before uncertain edits, but omit them when no inspection is needed.
 - Every inspect or command action MUST contain a non-empty argv array whose first item is the executable. Never put its command in path, content, expected, or a shell string.
@@ -1030,6 +1098,7 @@ Rules:
 
     # Three identical setbacks is enough. The fourth is not new evidence.
     REPEATED_FAILURE_LIMIT = 3
+    MAX_DISCOVERY_ROUNDS = 1
 
     @staticmethod
     def _failure_signature(failure: str) -> str:
@@ -1126,7 +1195,15 @@ Rules:
             filled = self._fill_content(task, action)
             if filled:
                 self._emit(task, "action", filled, {"action": action.model_dump(mode="json")})
-            result = executor.run(action)
+            if filled.startswith("blocked:"):
+                result = ActionResult(
+                    action_id=action.id,
+                    action_hash=self._action_hash(action),
+                    status=ActionStatus.BLOCKED,
+                    reason=filled.removeprefix("blocked:").strip(),
+                )
+            else:
+                result = executor.run(action)
             results.append(result)
             if result.status == ActionStatus.OK:
                 completed_ids.add(result.action_id)
@@ -1158,13 +1235,41 @@ Rules:
         return self.skills.load_selected(goal, limit=max(4, complexity * 2), max_chars=context_budget)
 
     @staticmethod
-    def _lint_plan(plan: ModelPlan | None) -> str:
+    def _is_discovery_plan(plan: ModelPlan | None) -> bool:
+        return bool(plan and plan.actions) and not plan.acceptance_checks and all(
+            action.kind in {ActionKind.INSPECT, ActionKind.NOTE}
+            for action in plan.actions
+        )
+
+    @staticmethod
+    def _lint_plan(
+        plan: ModelPlan | None,
+        *,
+        require_execution: bool = False,
+        require_checks: bool = False,
+    ) -> str:
         """Reject structurally doomed plans before execution so the replan
         prompt receives a precise correction instead of executor noise."""
 
         if plan is None:
             return "no plan was produced"
         problems: list[str] = []
+        if not plan.actions:
+            problems.append("no executable actions")
+        has_change = any(
+            action.kind in {
+                ActionKind.COMMAND,
+                ActionKind.PIPELINE,
+                ActionKind.PATCH,
+                ActionKind.CREATE,
+            }
+            for action in plan.actions
+        )
+        has_required_check = any(check.required for check in plan.acceptance_checks)
+        if require_execution and not has_change and not has_required_check:
+            problems.append("implementation plan has no executable change")
+        if require_checks and not any(check.required for check in plan.acceptance_checks):
+            problems.append("implementation plan has no required acceptance checks")
         action_ids = [action.id for action in plan.actions]
         duplicate_action_ids = sorted(
             {action_id for action_id in action_ids if action_ids.count(action_id) > 1}
@@ -1420,9 +1525,41 @@ Rules:
     def _plan_hash(plan: ModelPlan | None) -> str:
         if not plan:
             return ""
-        payload = plan.model_dump(mode="json")
-        for action in payload.get("actions", []):
-            action.pop("id", None)
+        action_ids = {action.id: index for index, action in enumerate(plan.actions)}
+        payload = {
+            "actions": [
+                {
+                    "kind": action.kind,
+                    "cwd": action.cwd,
+                    "argv": action.argv,
+                    "pipeline": action.pipeline,
+                    "patch": action.patch,
+                    "path": action.path,
+                    "content": action.content,
+                    "expected": " ".join(action.expected.split()).casefold(),
+                    "acceptance_check": action.acceptance_check,
+                    "blocking": action.blocking,
+                    "risk": action.risk,
+                    "option_id": action.option_id,
+                    "depends_on": [action_ids.get(item, item) for item in action.depends_on],
+                    "parallel_group": action.parallel_group,
+                }
+                for action in plan.actions
+            ],
+            "checks": [
+                {
+                    "argv": check.argv,
+                    "cwd": check.cwd,
+                    "timeout": check.timeout,
+                    "required": check.required,
+                }
+                for check in plan.acceptance_checks
+            ],
+            "selected_options": sorted(
+                option.id for option in plan.options if option.selected_by_default
+            ),
+            "selection_required": plan.selection_required,
+        }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
     @staticmethod
@@ -1433,9 +1570,6 @@ Rules:
 
     def _initialize_guide(self, task: TaskRecord) -> None:
         goal = task.request.goal
-        questions = []
-        if not task.request.acceptance_checks:
-            questions.append("What observable evidence will make this complete for you?")
         task.guide = MissionGuide(
             statement=f"Deliver a verified result for: {goal}",
             todo=[
@@ -1447,7 +1581,7 @@ Rules:
             ],
             current="Guide written; resolving the workspace and definition of done.",
             progress="0/5 complete",
-            questions=questions,
+            questions=[],
         )
 
     def _update_guide(self, task: TaskRecord, event_type: str, message: str, data: dict[str, Any]) -> None:
@@ -1477,6 +1611,7 @@ Rules:
             guide.current = message
         elif event_type == "plan":
             guide.current = f"Plan: {message}"
+            guide.todo = [step for step in guide.todo if not step.id.startswith("action-")]
             for item in data.get("steps") or []:
                 if not isinstance(item, dict):
                     continue
@@ -1549,11 +1684,10 @@ Rules:
     def _repair_plan(self, task: TaskRecord) -> list[str]:
         """Turn edits the planner could not express into edits it can.
 
-        An 8B planner reliably knows *what* to change and reliably fails to emit
-        a valid unified diff for it. Rejecting the plan throws away a correct
-        diagnosis over a formatting limitation, so a body-less patch on a file
-        that exists becomes a rewrite instead: same intent, and the coder
-        produces the new content from the real file at execution time.
+        An 8B planner reliably knows *what* to change and can fail to emit a
+        valid unified diff for it. A body-less patch on a small existing file
+        becomes a rewrite request; the coder fills the body and the execution
+        path turns it into a preimage-checked unified patch before applying it.
         """
 
         if not task.plan:
@@ -1569,7 +1703,7 @@ Rules:
                 target.relative_to(self.workspace)
             except (OSError, ValueError):
                 continue
-            if not target.is_file():
+            if not target.is_file() or target.stat().st_size > 6_000:
                 continue
             action.kind = ActionKind.CREATE
             action.content = ""  # the coder rewrites it from the file on disk
@@ -1590,21 +1724,57 @@ Rules:
         if action.kind != ActionKind.CREATE or not action.path:
             return ""
         existing = action.content or ""
+        current_body = ""
+        live_path: Path | None = None
+        try:
+            live_path = (self.workspace / action.path).resolve()
+            live_path.relative_to(self.workspace)
+            if live_path.is_file():
+                if live_path.stat().st_size > 6_000:
+                    return f"blocked: refusing to rewrite large existing file {action.path}"
+                current_body = live_path.read_text(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            live_path = None
+
+        if (
+            live_path is not None
+            and live_path.is_file()
+            and existing.strip()
+            and not self._PLACEHOLDER.search(existing)
+        ):
+            if current_body == existing:
+                action.kind = ActionKind.NOTE
+                action.content = f"{action.path} already contains the requested content"
+                return f"{action.path}: already contains the requested content"
+            patch = "".join(
+                difflib.unified_diff(
+                    current_body.splitlines(keepends=True),
+                    existing.splitlines(keepends=True),
+                    fromfile=f"a/{action.path}",
+                    tofile=f"b/{action.path}",
+                )
+            )
+            if not patch:
+                return f"blocked: could not derive a safe patch for {action.path}"
+            action.kind = ActionKind.PATCH
+            action.patch = patch
+            action.content = ""
+            action.preimage_hashes[str(live_path.relative_to(self.workspace))] = hashlib.sha256(
+                current_body.encode("utf-8")
+            ).hexdigest()
+            return f"{action.path}: converted the repeat CREATE into a safe patch"
+
         # Deterministic, not a size guess. Regenerate only when the planner gave
         # nothing or gave an admitted stub. A short body it wrote on purpose --
         # a marker file, a tiny config -- is its decision and is left alone.
         if existing.strip() and not self._PLACEHOLDER.search(existing):
             return ""
 
-        current = ""
-        try:
-            live = (self.workspace / action.path).resolve()
-            live.relative_to(self.workspace)
-            if live.is_file():
-                body = live.read_text(encoding="utf-8", errors="replace")[:6000]
-                current = f"THE FILE CURRENTLY CONTAINS (fix it, keep what works):\n{body}"
-        except (OSError, ValueError):
-            current = ""
+        current = (
+            f"THE FILE CURRENTLY CONTAINS (fix it, keep what works):\n{current_body}"
+            if current_body
+            else ""
+        )
         prompt = f"""
 Write the complete, finished contents of one file. Output the file body and nothing else:
 no prose, no explanation, no markdown fence.
@@ -1628,13 +1798,32 @@ Requirements:
                 prompt, role="coder", think=False, timeout=max(300, task.request.timeout)
             )
         except Exception as exc:
-            return f"could not write {action.path}: {type(exc).__name__}"
+            return f"blocked: could not write {action.path}: {type(exc).__name__}"
         body = self._unfence(str(raw))
         # Only reject an empty answer. Length is not quality: correct, concise
         # code is routinely SHORTER than the verbose stub it replaces, and a
         # "must not shrink" rule silently kept every stub in place.
         if not body.strip():
-            return f"the coder returned nothing for {action.path}"
+            return f"blocked: the coder returned nothing for {action.path}"
+        if live_path is not None and live_path.is_file():
+            patch = "".join(
+                difflib.unified_diff(
+                    current_body.splitlines(keepends=True),
+                    body.splitlines(keepends=True),
+                    fromfile=f"a/{action.path}",
+                    tofile=f"b/{action.path}",
+                )
+            )
+            if not patch:
+                return f"blocked: the coder made no change to {action.path}"
+            action.kind = ActionKind.PATCH
+            action.patch = patch
+            action.content = ""
+            action.preimage_hashes[str(live_path.relative_to(self.workspace))] = hashlib.sha256(
+                current_body.encode("utf-8")
+            ).hexdigest()
+            self._record_model_stats(task, "coder")
+            return f"{action.path}: wrote {len(body.splitlines())} lines as a safe patch"
         action.content = body
         self._record_model_stats(task, "coder")
         return f"{action.path}: wrote {len(body.splitlines())} lines with the coder"

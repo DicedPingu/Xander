@@ -47,6 +47,10 @@ _BUDGET = re.compile(
     re.IGNORECASE,
 )
 _REPAIR = re.compile(r"\b(?:fix|failing|broken|bug|regression|crash|triage|flaky)\b", re.IGNORECASE)
+_SPECIALIZED_RESEARCH = re.compile(
+    r"\b(?:wasm|web\s*assembly|webassembly|wasi|wit|security|performance)\b",
+    re.IGNORECASE,
+)
 
 _MASTER_REVIEWS_PER_TASK = 2
 _LURKER_BRIEF_LIMIT = 1200
@@ -93,9 +97,9 @@ class Squad:
         doubly so when the operator brought no acceptance checks."""
 
         helpers: list[str] = []
-        if mode == "implement":
+        if mode in {"implement", "plan"}:
             helpers.append(MASTER)
-        if complexity >= 3 or _BUDGET.search(goal):
+        if mode in {"research", "answer"} or complexity >= 3 or _BUDGET.search(goal) or _SPECIALIZED_RESEARCH.search(goal):
             helpers.append(LURKER)
         return cls(helpers=helpers[:2])
 

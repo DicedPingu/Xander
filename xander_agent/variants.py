@@ -19,6 +19,7 @@ from packaging.version import Version
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import __version__
+from .calibers import DEFAULT_MODELS
 from .paths import ensure_runtime_dirs, migration_dir, variants_dir
 
 VARIANT_SCHEMA = "xander.variant/v1"
@@ -49,14 +50,7 @@ class VariantProfile(BaseModel):
     engine_requirement: str = f"=={__version__}"
     parent: str | None = None
     created_at: str = Field(default_factory=_now)
-    model_routing: dict[str, str] = Field(
-        default_factory=lambda: {
-            "coder": "huihui_ai/qwen2.5-coder-abliterate:7b",
-            "planner": "huihui_ai/qwen3-abliterated:8b",
-            "classifier": "huihui_ai/qwen2.5-vl-abliterated:3b",
-            "critic": "huihui_ai/qwen3-abliterated:8b",
-        }
-    )
+    model_routing: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_MODELS))
     skill_groups: list[str] = Field(default_factory=lambda: ["core-workflow", "code-quality"])
     autonomy: Literal["full-auto", "supervised", "proposal-only"] = "full-auto"
     voice: Literal["chatty", "quiet", "off"] = "chatty"

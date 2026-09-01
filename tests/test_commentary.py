@@ -96,3 +96,31 @@ def test_backend_failure_falls_back_to_templates(tmp_path: Path) -> None:
     voice = Commentator(backend=ExplodingBackend(), memory=memory)
     line = voice.say("kickoff", goal="survive a melting model")
     assert "survive a melting model" in line
+
+
+def test_factual_updates_never_trade_evidence_for_model_chatter() -> None:
+    class VagueBackend:
+        def available(self) -> bool:
+            return True
+
+        def generate(self, prompt, **kwargs) -> str:
+            return "I chose a package or perhaps a color."
+
+    voice = Commentator(backend=VagueBackend())
+
+    line = voice.say(
+        "progress",
+        master="Master",
+        attempt=2,
+        actions_ok=1,
+        actions_total=3,
+        checks_passed=0,
+        checks_total=1,
+        state="git clone was blocked",
+    )
+
+    assert line.startswith("Master — attempt 2: 1/3")
+    assert "git clone was blocked" in line
+
+    kickoff = voice.say("kickoff", goal="build the WebAssembly game")
+    assert kickoff.startswith("On it — build the WebAssembly game")

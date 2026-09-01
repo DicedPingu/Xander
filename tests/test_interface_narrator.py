@@ -34,6 +34,21 @@ def test_events_route_to_their_specialty_channels(tmp_path: Path) -> None:
     assert narrator.narrate({"type": "plan", "message": "x"})[0] == "plan"
     assert narrator.narrate({"type": "research", "message": "x"})[0] == "research"
     assert narrator.narrate({"type": "action", "message": "x"})[0] == "run"
+    assert narrator.narrate({"type": "logic_change", "message": "new route", "data": {"reason": "failed proof"}})[0] == "diff"
+
+
+def test_logic_changes_are_explicit_in_the_plain_log(tmp_path: Path) -> None:
+    narrator = make_narrator(tmp_path)
+    _, line = narrator.narrate(
+        {
+            "type": "logic_change",
+            "message": "approach changed after new evidence",
+            "data": {"reason": "the first check failed", "from": "old", "to": "new"},
+        }
+    )
+    assert "↻" in line
+    assert "why=the first check failed" in line
+    assert "[APPROACH CHANGED]" in (tmp_path / "xander.log").read_text(encoding="utf-8")
 
 
 def test_digest_keeps_only_the_readable_fields(tmp_path: Path) -> None:

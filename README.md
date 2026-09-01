@@ -2,7 +2,7 @@
 
 Offline-first local coding agent — a project manager you hand orders to.
 Flexible, clonable, learns from every verified task, and after learning uses
-only the essential: at most 3 skills, only the relevant tools, only the model
+only useful context: grouped general and task-specific skills, relevant tools, and the model
 depth the task needs.
 
 ## The mantra
@@ -20,7 +20,7 @@ Xander carries a little of every ability and deploys only what's relevant:
 |---|---|---|
 | llm | analyze | language judgment, classification |
 | oracle | research | local truth, current docs, existing solutions |
-| quartermaster | set up | selects minimal gear: 1–3 skills, task tools |
+| quartermaster | set up | assembles grouped gear by relevance and context budget, plus task tools |
 | agent | work | the autonomous plan-and-act loop |
 | algorithm | test, judge | deterministic execution, checks, judgment |
 | scribe | learn | logs evidence, keeps at most one lesson per win |
@@ -32,9 +32,61 @@ Xander carries a little of every ability and deploys only what's relevant:
 xander            # opens the TUI in the current workspace
 ```
 
-One command: **Work**. Press `w`, type the order, press Enter. The Run tab
-narrates every phase live; Research, Plan, Diff, and Tests keep their own
-feeds. Tasks, Skills, and Variants tabs show the persisted state.
+Xander opens at a Mission menu grounded in the folder you launched him from.
+The opening has five genuinely different layouts, selectable with `--style`
+or by pressing `v`: `desk`, `compass`, `chronicle`, `workshop`, and `resident`.
+They change the information architecture, not just the palette: a task desk,
+a navigation compass, a history-first chronicle, an outcome workshop, and a
+minimal resident mode. After `v`, press `1` through `5` to jump directly to
+one of them; the picker is inside Xander and leaves a readable selection line
+in the Activity log.
+Each keeps the same understandable destinations: Mission, History, Soul,
+Desktop, and the live work log. The animated logo is decorative only; it never
+blocks input or appears in `--json` output.
+
+One command: **Mission**. Press `m` to open its dedicated form. Fill in the
+outcome, mode, authority, setup policy, variant, optional time limit, proof
+command, allowed paths, and constraints, then press **Start Mission**. Enter on
+the compact quick-start field remains available for experienced use.
+
+The launched folder is the workspace, not necessarily a project. Use
+`--workspace /absolute/path` when the order concerns an AI configuration,
+system configuration, package-manager state, or another operating-system area.
+Xander keeps his task records, logs, screenshots, learned skills, and
+management files in ASKAR even when the requested target workspace is outside
+ASKAR. `setup=ask` is the safe default; choose `setup=allow` only when you want
+package or toolchain setup actions to proceed without another prompt.
+
+Before analysis begins, Xander writes a living Mission Guide containing the
+statement, ordered TODO, current thought, progress, open questions, meaningful
+changes, and result. The guide changes as evidence arrives; it is the thing
+Xander uses to explain how far he has come and what he still needs from you.
+The focus card above the tabs is the quick brief: `NOW WORKING ON`, `THINKING`,
+`LAST MEANINGFUL CHANGE`, and `NEXT`. Activity is concise; Understand, Plan,
+Changes, and Proof keep their detailed feeds.
+
+History is the **Mission Library**. Select any Mission—including a completed
+one—to read its guide, continue it for further work, or explicitly delete it.
+Continuing a completed Mission reopens its guide and asks the engine for a new
+plan against the current workspace; it does not discard the earlier result.
+`c` cancels an active Mission before a new one is accepted; the current atomic
+step is allowed to wind down safely.
+
+Missions are the human name for workspace-scoped task records. They retain
+changes, milestones, thoughts, ideas, rebirths, and results in a readable
+timeline:
+
+```sh
+xander mission list
+xander mission show <mission-id>
+xander mission delete <mission-id>
+```
+
+Desktop observation is explicit (`d`) and local. If no supported Linux
+screenshot backend is installed, Xander says so rather than pretending he can
+see the screen. A real battery reporting `0%` cancels active work, records the
+stop, and sends one `systemctl poweroff` request; missing battery telemetry is
+treated as unknown, never as zero.
 
 - Orders submitted while the engine is busy are **queued** and start
   automatically when the current one finishes.
@@ -50,9 +102,18 @@ Keys: `[w]` work · `[enter]` run/queue · `[^p]` pause · `[^P]` resume ·
 Every narrated line has a plain twin on disk:
 
 ```sh
-tail -f ~/.local/state/xander/logs/xander.log        # central firehose
-tail -f ~/.local/state/xander/logs/<variant>.log     # one clone's stream
+tail -f /home/dicedpingu/SPQR/ASKAR/Xander/logs/xander.log        # central firehose
+tail -f /home/dicedpingu/SPQR/ASKAR/Xander/logs/<variant>.log     # one clone's stream
+xander oversee                                                   # latest work, routes, delegations, blockers
 ```
+
+Runtime records stay under `Xander/{config,state,cache,logs}`. New projects
+created without an explicitly opened workspace go under `Xander/projects/`.
+For an explicitly opened workspace outside that tree, requested source or
+configuration changes stay in the target while the readable `PROJECT.md` and
+detailed task logs are kept in `Xander/projects/external/`. Shared reviewed
+material is under `ASKAR/shared/`; Xander's private learned skill hubs are
+under `Xander/knowledge/skills/`.
 
 ## Global command
 
@@ -80,6 +141,9 @@ renders the same hierarchy live.
 
 ```sh
 xander run "goal" --accept "pytest -q"    # scriptable CLI (add --json for JSONL)
+xander run "install the required toolchain" --workspace /path/to/target --setup-policy allow
+xander run "inspect the system configuration" --workspace /etc --setup-policy never
+xander research "compare the safe package and source changes" --workspace /etc --setup-policy never
 xander plan "goal"                        # proposal-only, no mutations
 xander doctor                             # health: models, paths, skills, repo
 xander-mcp                                # MCP stdio server (proposal-only for callers)

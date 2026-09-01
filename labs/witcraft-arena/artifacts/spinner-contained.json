@@ -1,5 +1,5 @@
 {
-  "sha256": "87830219d038506b2b61867f572d894f83d27bd474148811b8672a3f847879b1",
+  "sha256": "cc4200aa5b65526f0a7aac027371b4ea26cdbd6204260e3cd159c3d89894f727",
   "replay": {
     "schema": "witcraft.replay/v1",
     "seed": 7,
@@ -242,7 +242,7 @@
               "kind": "hold"
             },
             "fuel_used": 0,
-            "error": "target/wasm32-wasip2/release/witcraft_spinner_fixture.wasm: wasm trap: cannot enter component instance"
+            "error": "bot disabled after sandbox fault: target/wasm32-wasip2/release/witcraft_spinner_fixture.wasm: error while executing at wasm backtrace:\n    0:   0x4e5b - <unknown>!<wasm function 108>: wasm trap: all fuel consumed by WebAssembly"
           }
         ],
         "players_after": [
@@ -327,7 +327,7 @@
               "kind": "hold"
             },
             "fuel_used": 0,
-            "error": "target/wasm32-wasip2/release/witcraft_spinner_fixture.wasm: wasm trap: cannot enter component instance"
+            "error": "bot disabled after sandbox fault: target/wasm32-wasip2/release/witcraft_spinner_fixture.wasm: error while executing at wasm backtrace:\n    0:   0x4e5b - <unknown>!<wasm function 108>: wasm trap: all fuel consumed by WebAssembly"
           }
         ],
         "players_after": [

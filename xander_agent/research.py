@@ -5,11 +5,12 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
 
 from .models import ResearchBundle
+from .paths import shared_dir
 from .skills import SkillRegistry
 
 
@@ -17,9 +18,17 @@ TOOL_HINTS = {
     "python": {"python", "pyproject", "pytest", "pydantic", "textual", "mcp"},
     "uv": {"python", "uv", "pyproject", "pydantic", "textual", "mcp"},
     "pytest": {"python", "test", "pytest"},
-    "cargo": {"rust", "cargo", "wasm", "wasmtime", "wit", "wasi"},
-    "rustc": {"rust", "cargo", "wasm", "wasmtime", "wit", "wasi"},
-    "wasm-tools": {"wasm", "component", "wit", "wasi"},
+    "cargo": {"rust", "cargo", "wasm", "webassembly", "web assembly", "wasmtime", "wit", "wasi"},
+    "rustc": {"rust", "cargo", "wasm", "webassembly", "web assembly", "wasmtime", "wit", "wasi"},
+    "wat2wasm": {"wasm", "webassembly", "web assembly", "wat"},
+    "wasm-ld": {"wasm", "webassembly", "web assembly", "wasi"},
+    "wasm-tools": {"wasm", "webassembly", "web assembly", "component", "wit", "wasi"},
+    "wasm-bindgen": {"wasm", "webassembly", "web assembly", "browser", "web"},
+    "wasm-pack": {"wasm", "webassembly", "web assembly", "browser", "web"},
+    "wasm-validate": {"wasm", "webassembly", "web assembly", "validate"},
+    "wasmtime": {"wasm", "webassembly", "wasi", "runtime", "sandbox"},
+    "docker": {"container", "docker", "sandbox", "untrusted", "risky"},
+    "podman": {"container", "podman", "sandbox", "untrusted", "risky"},
     "git": {"git", "repo", "repository", "patch", "commit", "diff"},
     "gh": {"github", "pull request", "repository", "existing solution"},
     "node": {"javascript", "typescript", "node", "npm", "react", "web"},
@@ -100,7 +109,7 @@ class Researcher:
         tools = self._relevant_tools(query)
         skills = [
             {key: value for key, value in record.items() if key in {"name", "description", "category", "bucket", "path", "score"}}
-            for record in self.skills.search(query, limit=3)
+            for record in self.skills.search(query, limit=12)
         ]
         documentation, doc_sources, warnings = self._context7(query)
         web_digest, web_sources = self._web_search(query)
@@ -146,7 +155,73 @@ class Researcher:
             except OSError:
                 continue
             sections.append(f"{name} (bounded):\n{_redact(content[:12_000])}")
+        shared = self._shared_context()
+        if shared:
+            sections.append("ASKAR shared guidance (bounded):\n" + shared)
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _shared_context() -> str:
+        root = shared_dir()
+        if not root.is_dir():
+            return ""
+        sections: list[str] = []
+        remaining = 16_000
+        for path in sorted(root.rglob("*.md")):
+            if any(part in {".git", ".venv", "__pycache__"} for part in path.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            content = _redact(content[:remaining])
+            if not content.strip():
+                continue
+            sections.append(f"{path.relative_to(root)}:\n{content}")
+            remaining -= len(content)
+            if remaining <= 0:
+                break
+        return "\n\n".join(sections)
+
+    def monica_brief(self, goal: str) -> str:
+        setting = os.environ.get("XANDER_DELEGATE_MONICA", "auto").casefold()
+        if setting in {"0", "false", "off", "no"}:
+            return ""
+        if os.environ.get("XANDER_OFFLINE") and setting not in {"1", "true", "yes", "on"}:
+            return ""
+        monica_dir = shared_dir().parent / "Monica"
+        script = monica_dir / "monica.py"
+        command = shutil.which("monica")
+        if command:
+            argv = [command]
+        elif script.is_file():
+            argv = [sys.executable, str(script)]
+        else:
+            return ""
+        env = {**os.environ, "ASKAR_JSON": "1"}
+        try:
+            run = subprocess.run(
+                [*argv, "--no-tui", "--plain", "--json", "--shape", "reference", goal],
+                cwd=monica_dir,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+                env=env,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        if run.returncode != 0:
+            return ""
+        for line in reversed(run.stdout.splitlines()):
+            try:
+                payload = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            answer = payload.get("answer") if isinstance(payload, dict) else None
+            if isinstance(answer, str) and answer.strip():
+                return _redact(answer.strip()[:6_000])
+        return ""
 
     def _relevant_tools(self, query: str) -> dict[str, str]:
         lowered = query.lower()

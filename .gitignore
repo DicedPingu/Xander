@@ -15,3 +15,13 @@ labs/**/target/
 state/
 logs/
 out/
+cache/
+config/
+projects/*
+!projects/README.md
+knowledge/
+
+# Local editor and agent tooling, machine-specific.
+.vexp/
+.vscode/
+.codex/

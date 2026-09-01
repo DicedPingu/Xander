@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from . import ABILITIES, MANTRA_PHASES, __version__
+from . import ABILITIES, ABILITY_GROUPS, MANTRA_PHASES, __version__
 from .paths import (
     cache_dir,
     config_dir,
@@ -374,6 +374,7 @@ def doctor_payload(workspace: Path, variant: str = "default") -> dict[str, Any]:
         "python": sys.version.split()[0],
         "mantra": list(MANTRA_PHASES),
         "abilities": list(ABILITIES),
+        "ability_groups": {group: list(members) for group, members in ABILITY_GROUPS.items()},
         "workspace": str(workspace.expanduser().resolve()),
         "paths": {
             "config": str(config_dir()),
@@ -591,7 +592,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--provider",
         action="append",
         default=[],
-        help="duckduckgo|wikipedia|pypi|stackoverflow; repeatable",
+        help="duckduckgo|wikipedia|pypi|stackoverflow|github|github_code; repeatable",
     )
     web_search.add_argument("--fetch", help="fetch one URL as readable text instead of searching")
 

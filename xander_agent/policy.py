@@ -35,6 +35,55 @@ PACKAGE_MUTATIONS = {
     ("pacman", "-S"),
     ("npm", "install"),
 }
+PACKAGE_MANAGER_EXECUTABLES = {
+    "apt",
+    "apt-get",
+    "apk",
+    "brew",
+    "cargo",
+    "composer",
+    "dnf",
+    "dotnet",
+    "flatpak",
+    "flutter",
+    "gem",
+    "go",
+    "gradle",
+    "mvn",
+    "nala",
+    "npm",
+    "nuget",
+    "pacman",
+    "pip",
+    "pip3",
+    "pipx",
+    "pnpm",
+    "poetry",
+    "python",
+    "python3",
+    "rustup",
+    "snap",
+    "uv",
+    "yarn",
+    "yum",
+    "zypper",
+}
+PACKAGE_MUTATION_WORDS = {
+    "add",
+    "bootstrap",
+    "download",
+    "fetch",
+    "get",
+    "i",
+    "install",
+    "link",
+    "refresh",
+    "restore",
+    "sync",
+    "update",
+    "upgrade",
+}
+SETUP_MUTATION_WORDS = PACKAGE_MUTATION_WORDS - {"link"}
 FILESYSTEM_MUTATORS = {
     "chmod",
     "chown",
@@ -50,6 +99,7 @@ FILESYSTEM_MUTATORS = {
     "truncate",
 }
 INTERPRETERS = {"bash", "dash", "node", "perl", "python", "python3", "ruby", "sh", "zsh"}
+CONTAINER_EXECUTABLES = {"docker", "podman"}
 COMMAND_WRAPPERS = {"env", "nice", "nohup", "stdbuf", "timeout"}
 READ_ONLY_EXECUTABLES = {
     "cat",
@@ -211,6 +261,68 @@ def _git_subcommand(argv: list[str]) -> str:
     return ""
 
 
+def _git_clone_destination(argv: list[str], workspace: Path) -> Path | None:
+    """Resolve a plain clone destination, or return None for unsafe syntax."""
+
+    if len(argv) < 3 or Path(argv[0]).name != "git" or argv[1] != "clone":
+        return None
+    options_with_values = {
+        "-b",
+        "--branch",
+        "--depth",
+        "--filter",
+        "-j",
+        "--jobs",
+        "-o",
+        "--origin",
+        "--reference",
+        "--reference-if-able",
+        "--shallow-exclude",
+        "--shallow-since",
+    }
+    blocked_options = {
+        "-c",
+        "--config",
+        "--separate-git-dir",
+        "--server-option",
+        "-u",
+        "--upload-pack",
+        "--template",
+        "--bundle-uri",
+    }
+    positionals: list[str] = []
+    index = 2
+    while index < len(argv):
+        token = argv[index]
+        option = token.split("=", 1)[0]
+        if token == "--":
+            positionals.extend(argv[index + 1 :])
+            break
+        if option in blocked_options:
+            return None
+        if option in options_with_values:
+            index += 1 if "=" in token else 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    if not positionals or len(positionals) > 2 or positionals[0].startswith("ext::"):
+        return None
+    if len(positionals) == 2:
+        candidate = positionals[1]
+    else:
+        repository = positionals[0].rstrip("/")
+        candidate = Path(repository.removesuffix(".git")).name
+        if not candidate:
+            return None
+    try:
+        return resolve_inside(workspace, candidate)
+    except ValueError:
+        return None
+
+
 def is_read_only_argv(argv: list[str]) -> bool:
     if not argv:
         return False
@@ -236,7 +348,27 @@ def is_read_only_argv(argv: list[str]) -> bool:
         return False
     if executable == "ollama":
         return len(argv) >= 2 and argv[1] in {"list", "ps", "show"}
+    if executable in CONTAINER_EXECUTABLES:
+        return len(argv) >= 2 and argv[1] in {"--version", "version", "info", "ps", "images"}
     return False
+
+
+def container_safety_reason(argv: list[str]) -> str | None:
+    if not argv or Path(argv[0]).name not in CONTAINER_EXECUTABLES:
+        return None
+    if any(token in argv for token in {"--privileged", "--pid=host", "--network=host", "--ipc=host"}):
+        return "container escape boundary weakened by privileged or host namespace access"
+    if any(token == "--cap-add" or token.startswith("--cap-add=") for token in argv):
+        return "container escape boundary weakened by added capabilities"
+    if any(token == "--device" or token.startswith("--device=") for token in argv):
+        return "container escape boundary weakened by host device access"
+    if any("/var/run/docker.sock" in token for token in argv):
+        return "container escape boundary weakened by a host container socket"
+    if any(token in {"--volume", "-v", "--mount"} or token.startswith(("--volume=", "--mount=")) for token in argv):
+        return "container host bind mount requires explicit isolation review"
+    if any(token in {"run", "exec", "build", "compose"} for token in argv[1:]):
+        return "container execution requires explicit approval and isolated runtime flags"
+    return None
 
 
 def _wrapped_argv(argv: list[str]) -> list[str]:
@@ -309,34 +441,33 @@ def _argv_risk(argv: list[str]) -> Risk:
     package_mutations = {
         "add",
         "autoremove",
+        "bootstrap",
         "dist-upgrade",
+        "download",
+        "fetch",
         "full-upgrade",
+        "get",
+        "i",
         "install",
+        "link",
         "publish",
         "purge",
         "remove",
+        "refresh",
+        "restore",
         "sync",
         "uninstall",
         "upgrade",
         "upload",
     }
-    if executable in {
-        "apt",
-        "apt-get",
-        "cargo",
-        "dnf",
-        "nala",
-        "npm",
-        "pacman",
-        "pip",
-        "pip3",
-        "twine",
-        "uv",
-    } and tokens & package_mutations:
+    if executable in PACKAGE_MANAGER_EXECUTABLES and tokens & package_mutations:
         return Risk.HIGH
     if executable == "gh":
         return Risk.LOW if argv[1:] in (["--version"], ["auth", "status"]) else Risk.HIGH
     if executable == "git":
+        subcommand = _git_subcommand(argv)
+        if subcommand == "clone":
+            return Risk.MEDIUM
         return Risk.LOW if is_read_only_argv(argv) else Risk.HIGH
     if executable in {"sed", "find", "command", "ollama"}:
         return Risk.LOW if is_read_only_argv(argv) else Risk.HIGH
@@ -383,6 +514,18 @@ def classify_risk(action: Action) -> Risk:
     commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
     risks = [action.risk, *(_argv_risk(argv) for argv in commands if argv)]
     return max(risks, key=_risk_rank)
+
+
+def is_setup_action(action: Action) -> bool:
+    commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
+    for argv in commands:
+        for index, token in enumerate(argv):
+            if Path(token).name.casefold() not in PACKAGE_MANAGER_EXECUTABLES:
+                continue
+            tail = {item.casefold() for item in argv[index + 1:] if not item.startswith("-")}
+            if tail & SETUP_MUTATION_WORDS:
+                return True
+    return False
 
 
 def _risk_rank(value: Risk) -> int:
@@ -432,6 +575,19 @@ def approval_reason(
 ) -> str | None:
     risk = classify_risk(action)
     paths = changed_paths(action, workspace)
+    commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
+    for command in commands:
+        safety_reason = container_safety_reason(command)
+        if safety_reason:
+            return safety_reason
+        effective = command
+        while effective and Path(effective[0]).name in COMMAND_WRAPPERS:
+            effective = _wrapped_argv(effective)
+        if effective and Path(effective[0]).name == "git" and _git_subcommand(effective) == "clone":
+            destination = _git_clone_destination(effective, workspace)
+            if destination is None:
+                return "git clone syntax or destination is not workspace-contained"
+            paths.append(destination)
     if allowed_paths and risk != Risk.LOW and action.kind in {
         ActionKind.COMMAND,
         ActionKind.PIPELINE,

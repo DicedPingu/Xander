@@ -9,7 +9,7 @@ import pytest
 
 from xander_agent.executor import ActionExecutor
 from xander_agent.models import Action, ActionKind, ActionStatus, Risk
-from xander_agent.policy import approval_reason, classify_risk, snapshot_workspace
+from xander_agent.policy import approval_reason, classify_risk, is_setup_action, snapshot_workspace
 
 
 @pytest.mark.parametrize(
@@ -29,6 +29,130 @@ def test_wrapped_or_reordered_mutations_are_high_risk_and_require_approval(
     assert classify_risk(action) == Risk.HIGH
     assert approval_reason(action, tmp_path, snapshot, "full-auto", []) is not None
     assert ActionExecutor(tmp_path, snapshot).run(action).status == ActionStatus.BLOCKED
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["sudo", "apt-get", "update"],
+        ["python3", "-m", "pip", "install", "example"],
+        ["cargo", "install", "tool"],
+        ["npm", "upgrade", "example"],
+    ],
+)
+def test_common_package_manager_setup_is_detected_without_allowing_removal(argv: list[str]) -> None:
+    action = Action(kind=ActionKind.COMMAND, argv=argv, expected="prepare a toolchain")
+
+    assert classify_risk(action) == Risk.HIGH
+    assert is_setup_action(action)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["apt-get", "remove", "example"], ["pip", "uninstall", "example"], ["cargo", "uninstall", "tool"]],
+)
+def test_package_removal_is_not_covered_by_setup_allowance(argv: list[str]) -> None:
+    assert not is_setup_action(Action(kind=ActionKind.COMMAND, argv=argv, expected="remove a package"))
+
+
+def test_public_git_clone_is_a_local_workspace_mutation_not_an_external_write(
+    tmp_path: Path,
+) -> None:
+    snapshot = snapshot_workspace(tmp_path)
+    action = Action(
+        kind=ActionKind.COMMAND,
+        argv=["git", "clone", "https://example.com/public.git"],
+        expected="clone a public repository into the workspace",
+    )
+
+    assert classify_risk(action) == Risk.MEDIUM
+    assert approval_reason(action, tmp_path, snapshot, "full-auto", []) is None
+
+
+def test_container_execution_requires_isolated_runtime_review(tmp_path: Path) -> None:
+    action = Action(
+        kind=ActionKind.COMMAND,
+        argv=["docker", "run", "--rm", "image", "pytest"],
+        expected="run tests in a container",
+    )
+
+    reason = approval_reason(action, tmp_path, snapshot_workspace(tmp_path), "full-auto", [])
+
+    assert classify_risk(action) == Risk.MEDIUM
+    assert reason is not None
+    assert "isolated runtime flags" in reason
+
+
+def test_privileged_container_is_rejected_as_escape_boundary(tmp_path: Path) -> None:
+    action = Action(
+        kind=ActionKind.COMMAND,
+        argv=["docker", "run", "--privileged", "image", "sh"],
+        expected="must not weaken host isolation",
+    )
+
+    reason = approval_reason(action, tmp_path, snapshot_workspace(tmp_path), "full-auto", [])
+
+    assert reason is not None
+    assert "host namespace" in reason
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["git", "clone", "https://example.com/public.git", "../outside"],
+        ["git", "clone", "https://example.com/public.git", "/tmp/outside"],
+        [
+            "git",
+            "clone",
+            "--separate-git-dir=/tmp/outside-git",
+            "https://example.com/public.git",
+            "inside",
+        ],
+        ["git", "-C", "../outside", "clone", "https://example.com/public.git"],
+    ],
+)
+def test_git_clone_cannot_escape_or_use_path_writing_options(
+    tmp_path: Path, argv: list[str]
+) -> None:
+    action = Action(kind=ActionKind.COMMAND, argv=argv, expected="unsafe clone")
+
+    assert approval_reason(
+        action,
+        tmp_path,
+        snapshot_workspace(tmp_path),
+        "full-auto",
+        [],
+    ) is not None
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        Action(
+            kind=ActionKind.COMMAND,
+            argv=["env", "git", "clone", "https://example.com/public.git", "../outside"],
+            expected="wrapped unsafe clone",
+        ),
+        Action(
+            kind=ActionKind.PIPELINE,
+            pipeline=[
+                ["printf", "unused"],
+                ["git", "clone", "https://example.com/public.git", "../outside"],
+            ],
+            expected="pipelined unsafe clone",
+        ),
+    ],
+)
+def test_wrapped_and_pipelined_git_clone_cannot_bypass_containment(
+    tmp_path: Path, action: Action
+) -> None:
+    assert approval_reason(
+        action,
+        tmp_path,
+        snapshot_workspace(tmp_path),
+        "full-auto",
+        [],
+    ) is not None
 
 
 def test_proposal_inspect_blocks_python_writes_but_allows_safe_inspection(tmp_path: Path) -> None:

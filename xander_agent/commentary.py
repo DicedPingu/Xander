@@ -34,6 +34,16 @@ _ALWAYS_AUDIBLE = {"setback", "victory", "question", "feedback_ack"}
 _LINE_CAPS = {"chatty": 10, "quiet": 4, "off": 0}
 _MODEL_TIMEOUT = 30
 _MAX_LINE = 200
+_FACTUAL_MOMENTS = {
+    "kickoff",
+    "approach",
+    "action",
+    "setback",
+    "victory",
+    "progress",
+    "question",
+    "feedback_ack",
+}
 
 
 class _Backend(Protocol):
@@ -85,7 +95,12 @@ class Commentator:
 
     # -- model path -----------------------------------------------------------
     def _model_line(self, moment: str, context: dict[str, Any]) -> str:
-        if self.voice != "chatty" or self.backend is None or self._model_calls >= 6:
+        if (
+            moment in _FACTUAL_MOMENTS
+            or self.voice != "chatty"
+            or self.backend is None
+            or self._model_calls >= 6
+        ):
             return ""
         try:
             if not self.backend.available():

@@ -13,15 +13,10 @@ from typing import Any, Callable, Protocol
 
 from pydantic import BaseModel
 
+from .calibers import DEFAULT_MODELS, alternatives, best_installed, ordered_models, upgrades
 from .policy import neutral_intent_contract
 
-
-DEFAULT_MODELS = {
-    "coder": "huihui_ai/qwen2.5-coder-abliterate:7b",
-    "planner": "huihui_ai/qwen3-abliterated:8b",
-    "classifier": "huihui_ai/qwen2.5-vl-abliterated:3b",
-    "critic": "huihui_ai/qwen3-abliterated:8b",
-}
+__all__ = ["DEFAULT_MODELS", "OllamaBackend", "AnthropicBackend", "HybridBackend", "backend_for", "get_backend"]
 
 _GENERATION_LOCK = threading.Lock()
 
@@ -79,7 +74,7 @@ class OllamaBackend:
             with urllib.request.urlopen(request, timeout=self.connect_timeout) as response:
                 return response.status == 200
         except Exception:
-            return False
+            return bool(self.installed_models())
 
     def installed_models(self) -> list[str]:
         try:
@@ -98,10 +93,17 @@ class OllamaBackend:
             "installed_models": installed,
             "routing": self.models,
             "missing_routed_models": sorted({model for model in self.models.values() if model not in installed}),
+            "resolved_routing": {role: best_installed(model, installed) for role, model in self.models.items()},
+            "upgrades_available": upgrades(self.models, installed),
+            "alternative_builds": {
+                role: alternates
+                for role, model in self.models.items()
+                if (alternates := alternatives(model, installed))
+            },
             "resource_policy": {
                 "parallel_generations": 1,
                 "keep_alive": self.keep_alive,
-                "context_tokens": 4096,
+                "context_tokens": 8192,
                 "minimum_available_memory_mb": self.min_available_memory_mb,
                 "maximum_temperature_c": self.max_temperature_c,
             },
@@ -167,6 +169,32 @@ class OllamaBackend:
             self.unload()
             raise RuntimeError(f"resource gate: temperature reached {max(temperatures)} C")
 
+    def pull(self, model: str, timeout: int = 1_800) -> tuple[bool, str]:
+        """Fetch a model into the local store. Returns ``(ok, detail)``.
+
+        Long by nature — several GB — so the caller owns the timeout and the
+        decision to start at all. Never raises: a failed pull is a reported
+        outcome, not an exception that ends a background run.
+        """
+
+        if not model or "\n" in model:
+            return False, "invalid model tag"
+        payload = json.dumps({"model": model, "stream": False}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/api/pull",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                body = json.loads(response.read().decode("utf-8") or "{}")
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"[:200]
+        status = str(body.get("status") or "")
+        if body.get("error"):
+            return False, str(body["error"])[:200]
+        return True, status or "pulled"
+
     def unload(self, model: str | None = None) -> None:
         target = model or self._resident_model
         if not target:
@@ -192,15 +220,9 @@ class OllamaBackend:
         self._resident_model = model
 
     def _models_for(self, role: str) -> list[str]:
-        preferred = self.models.get(role, self.models["coder"])
-        ordered = [preferred]
-        for fallback_role in ("coder", "planner", "critic"):
-            model = self.models[fallback_role]
-            if model not in ordered:
-                ordered.append(model)
-        installed = set(self.installed_models())
-        present = [model for model in ordered if model in installed]
-        return present or ordered
+        """Preferred model first, upgraded to the best build actually on disk."""
+
+        return ordered_models(role, self.installed_models(), self.models)
 
     def generate(
         self,
@@ -298,9 +320,9 @@ class OllamaBackend:
             "think": think,
             "options": {
                 "temperature": 0.2,
-                "num_ctx": 4096,
+                "num_ctx": 8192,
                 "num_batch": 128,
-                "num_predict": 2048 if schema is not None else 3072,
+                "num_predict": 3072,
             },
         }
         if schema is not None:

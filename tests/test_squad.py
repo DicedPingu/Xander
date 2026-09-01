@@ -20,6 +20,11 @@ def test_master_always_walks_with_mutating_missions() -> None:
     assert squad.master and not squad.lurker
 
 
+def test_plan_missions_muster_the_master_for_visible_review() -> None:
+    squad = Squad.muster("prepare the thing", complexity=1, has_checks=False, mode="plan")
+    assert squad.helpers == [MASTER]
+
+
 def test_size_budget_summons_the_lurker() -> None:
     squad = Squad.muster(
         "create a website with the game of tic tac toe that is less than 30 KB",
@@ -35,8 +40,28 @@ def test_high_complexity_summons_the_lurker_without_a_budget() -> None:
     assert squad.lurker
 
 
-def test_read_only_missions_walk_alone() -> None:
+def test_natural_web_assembly_mission_is_complex_enough_for_the_lurker(tmp_path: Path) -> None:
+    engine = Engine(
+        workspace=tmp_path,
+        backend=GrumpyCritic(),
+        task_store=TaskStore(root=tmp_path / "tasks"),
+        skill_registry=StubSkills(),
+        researcher=StubResearcher(),
+        memory=MemoryStore(path=tmp_path / "memory.json"),
+    )
+
+    complexity = engine._complexity("make a game in Web Assembly")
+
+    assert Squad.muster("make a game in Web Assembly", complexity, False, "implement").lurker
+
+
+def test_research_missions_delegate_to_the_lurker() -> None:
     squad = Squad.muster("explain the executor", complexity=1, has_checks=False, mode="research")
+    assert squad.helpers == [LURKER]
+
+
+def test_simple_inspection_stays_local() -> None:
+    squad = Squad.muster("list the executor files", complexity=1, has_checks=False, mode="inspect")
     assert squad.helpers == []
 
 

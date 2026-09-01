@@ -93,12 +93,29 @@ class AcceptanceCheck(StrictModel):
 
 class Action(StrictModel):
     id: str = Field(default_factory=lambda: uuid4().hex[:12])
-    kind: ActionKind
-    cwd: str = "."
-    argv: list[str] = Field(default_factory=list)
+    kind: ActionKind = Field(
+        description="Executable action type. inspect and command require a non-empty argv array."
+    )
+    cwd: str = Field(
+        default=".",
+        description="Working directory relative to the exact workspace; normally '.'.",
+    )
+    argv: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Full executable and arguments. REQUIRED and non-empty for inspect and command; "
+            "empty for create, patch, note, and pipeline."
+        ),
+    )
     pipeline: list[list[str]] = Field(default_factory=list)
     patch: str = ""
-    path: str = ""
+    path: str = Field(
+        default="",
+        description=(
+            "Target path relative to the exact workspace; only for create actions. "
+            "Missing parent directories are created automatically."
+        ),
+    )
     content: str = ""
     expected: str = ""
     acceptance_check: str | None = None
@@ -119,6 +136,7 @@ class Action(StrictModel):
 
 class ActionResult(StrictModel):
     action_id: str
+    action_hash: str = ""
     status: ActionStatus
     returncode: int | None = None
     stdout: str = ""
@@ -162,6 +180,7 @@ class XanderRequest(StrictModel):
     time_budget_seconds: int | None = Field(default=None, ge=60, le=86_400)
     variant: str = "default"
     autonomy: Literal["proposal", "supervised", "full-auto"] = "full-auto"
+    setup_policy: Literal["ask", "allow", "never"] = "ask"
     selected_options: list[str] = Field(default_factory=list)
 
     @field_validator("autonomy", mode="before")
@@ -189,8 +208,28 @@ class PlanOption(StrictModel):
     selected_by_default: bool = False
 
 
+class GuideStep(StrictModel):
+    id: str
+    text: str
+    state: Literal["todo", "active", "done", "blocked"] = "todo"
+    evidence: str = ""
+
+
+class MissionGuide(StrictModel):
+    statement: str
+    todo: list[GuideStep] = Field(default_factory=list)
+    current: str = ""
+    progress: str = "0/0 complete"
+    questions: list[str] = Field(default_factory=list)
+    last_change: str = ""
+    result: str = ""
+    updated_at: str = Field(default_factory=utc_now)
+
+
 class ModelPlan(StrictModel):
     summary: str
+    decision: str = ""
+    why: str = ""
     options: list[PlanOption] = Field(default_factory=list)
     selection_required: bool = False
     actions: list[Action] = Field(default_factory=list)
@@ -210,7 +249,9 @@ class TaskRecord(StrictModel):
     subject: str = ""
     effective_constraints: list[str] = Field(default_factory=list)
     research: ResearchBundle | None = None
+    tool_readiness: dict[str, Any] = Field(default_factory=dict)
     plan: ModelPlan | None = None
+    guide: MissionGuide | None = None
     results: list[ActionResult] = Field(default_factory=list)
     check_results: list[ActionResult] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
@@ -227,11 +268,14 @@ class XanderEvent(StrictModel):
     sequence: int
     type: Literal[
         "task",
+        "guide",
         "phase",
         "plan",
         "research",
+        "delegation",
         "action",
         "patch",
+        "logic_change",
         "test",
         "approval",
         "result",
@@ -254,6 +298,7 @@ class Handoff(StrictModel):
     goal: str
     status: TaskStatus
     snapshot: WorkspaceSnapshot | None = None
+    guide: MissionGuide | None = None
     research_sources: list[str] = Field(default_factory=list)
     plan: ModelPlan | None = None
     results: list[ActionResult] = Field(default_factory=list)

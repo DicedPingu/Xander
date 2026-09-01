@@ -15,7 +15,7 @@ def _task_dir() -> Path:
 
         return tasks_dir()
     except ImportError:
-        path = Path.home() / ".local" / "state" / "xander" / "tasks"
+        path = Path(__file__).resolve().parents[1] / "state" / "tasks"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -28,6 +28,16 @@ def new_task_id() -> str:
 class TaskStore:
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or _task_dir()
+        self._legacy_root: Path | None = None
+        if root is None:
+            try:
+                from .paths import legacy_tasks_dir
+
+                legacy = legacy_tasks_dir()
+                if legacy and legacy.resolve(strict=False) != self.root.resolve(strict=False):
+                    self._legacy_root = legacy
+            except ImportError:
+                self._legacy_root = None
         self.root.mkdir(parents=True, exist_ok=True)
 
     def create(self, request: XanderRequest) -> TaskRecord:
@@ -51,19 +61,37 @@ class TaskStore:
         return destination
 
     def load(self, task_id: str) -> TaskRecord:
-        path = self.path(task_id)
-        return TaskRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        paths = [self.path(task_id)]
+        if self._legacy_root:
+            paths.append(self._legacy_root / f"{task_id}.json")
+        for path in paths:
+            if not path.is_file():
+                continue
+            return TaskRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        raise FileNotFoundError(paths[0])
+
+    def delete(self, task_id: str) -> None:
+        """Delete one explicitly selected persisted task."""
+
+        self.path(task_id).unlink()
 
     def list(self, limit: int = 100) -> list[TaskRecord]:
-        records: list[TaskRecord] = []
-        for path in sorted(self.root.glob("*.json"), reverse=True):
-            try:
-                records.append(TaskRecord.model_validate_json(path.read_text(encoding="utf-8")))
-            except Exception:
-                continue
-            if len(records) >= limit:
-                break
-        return records
+        candidates: dict[str, tuple[int, TaskRecord]] = {}
+        roots = [(0, self.root)]
+        if self._legacy_root and self._legacy_root.is_dir():
+            roots.append((1, self._legacy_root))
+        for priority, root in roots:
+            for path in root.glob("*.json"):
+                try:
+                    record = TaskRecord.model_validate_json(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                current = candidates.get(record.id)
+                if current is None or priority < current[0]:
+                    candidates[record.id] = (priority, record)
+        records = [record for _, record in candidates.values()]
+        records.sort(key=lambda record: record.updated_at, reverse=True)
+        return records[:limit]
 
     def latest(self) -> TaskRecord | None:
         records = self.list(limit=1)
@@ -82,10 +110,10 @@ class TaskStore:
             goal=task.request.goal,
             status=task.status,
             snapshot=task.snapshot,
+            guide=task.guide,
             research_sources=task.research.sources if task.research else [],
             plan=task.plan,
             results=task.results,
             checks=task.check_results,
             unresolved=unresolved,
         )
-

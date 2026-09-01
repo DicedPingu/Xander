@@ -1,5 +1,48 @@
 # Design: Interactive, learning, squad-running Xander
 
+## 0. Opening surface: five doors into one Mission model
+
+`xander` opens in the current folder, with a non-blocking animated ASCII mark
+and a human menu instead of raw event JSON. Five layouts are deliberately
+different, while navigation and semantics stay stable:
+
+| style | visual idea | best first question |
+|---|---|---|
+| desk | task desk with one current Mission and its next action | what matters right now? |
+| compass | navigation-first home with four clear destinations | where should I go? |
+| chronicle | past-to-now history axis | what happened across Missions? |
+| workshop | one outcome prompt with only useful context | what result should Xander prove? |
+| resident | minimal ambient status strip | how can Xander stay nearby? |
+
+The shared doors are Mission, History, Soul, Desktop, and the live work log.
+Mission is the human projection of a persisted task in the current workspace.
+Its readable timeline groups changes, milestones, thoughts, ideas, rebirths,
+and the final result. Deleting a Mission is explicit and workspace-checked.
+
+The live focus card is deliberately separate from the event log. It always
+answers four questions in the same place: what is being worked on, what Xander
+is thinking about, what meaningful change last happened, and what comes next.
+The Activity view compresses identical repeated entries and marks the count;
+the detailed Understand, Plan, Changes, and Proof views retain their respective
+evidence without forcing the operator to read a raw firehose.
+
+Mission start is a form, not an anonymous text box. It exposes outcome, mode,
+authority, variant, time limit, proof command, allowed paths, and constraints.
+The History view is a Mission Library: a selected record can be inspected,
+continued, or explicitly deleted. A completed Mission can be reopened, which
+keeps its existing evidence and asks for a fresh plan against the current state.
+
+Every new Mission writes a living Guide before analysis. The Guide contains a
+mission statement, ordered TODO steps, current thought, progress, open
+questions, last meaningful change, and result. Engine events update it and the
+planner receives it as context, so questions and next steps are grounded in the
+same record the operator sees.
+
+Desktop capture is explicit and local, with a capability check and a graceful
+message when Linux screenshot support is absent. Power telemetry is separate
+from the Mission record: a real battery value of zero first cancels active
+work, then trips a one-shot shutdown request; unknown telemetry is not zero.
+
 Operator brief (2026-08-25): Xander should feel like a capable human teammate.
 He starts the mission the moment the order lands, talks in humanlike, relevant
 lines while working ("Making the background green, unless told otherwise",

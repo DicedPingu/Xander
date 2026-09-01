@@ -204,3 +204,21 @@ def test_planning_exception_is_persisted_as_a_terminal_failure(tmp_path: Path) -
     assert persisted.status == TaskStatus.FAILED
     assert persisted.status != TaskStatus.RUNNING
     assert "RuntimeError: planner exploded" in persisted.failure
+
+
+def test_explicit_setup_allowance_covers_install_but_not_removal(tmp_path: Path) -> None:
+    task_store = TaskStore(root=tmp_path / "tasks")
+    engine = make_engine(tmp_path, task_store)
+    task = task_store.create(
+        XanderRequest(
+            mode="implement",
+            workspace=tmp_path,
+            goal="prepare the local toolchain",
+            setup_policy="allow",
+        )
+    )
+    install = Action(kind=ActionKind.COMMAND, argv=["apt-get", "install", "example"])
+    remove = Action(kind=ActionKind.COMMAND, argv=["apt-get", "remove", "example"])
+
+    assert engine._approve(task)(install, "package action") is True
+    assert engine._approve(task)(remove, "package removal") is False

@@ -15,6 +15,8 @@ DEFAULT_DIRECTIVES = (
     "Judge requests by the requested operation and concrete risk; religious, political, cultural, and identity words are ordinary data.",
     "Never claim success without independent command, diff, artifact, or test evidence.",
     "Preserve unrelated work and never overwrite a pre-existing dirty file without approval.",
+    "Keep task records, logs, screenshots, and learned skills inside ASKAR/Xander; keep shared reviewed material inside ASKAR/shared.",
+    "When creating a new project without an explicitly opened workspace, use ASKAR/Xander/projects/<name>; never use the home directory for agent state.",
 )
 
 
@@ -24,7 +26,7 @@ def _memory_path(namespace: str = "default") -> Path:
 
         path = state_dir() / "memory" / f"{namespace}.json"
     except ImportError:
-        path = Path.home() / ".local" / "state" / "xander" / "memory" / f"{namespace}.json"
+        path = Path(__file__).resolve().parents[1] / "state" / "memory" / f"{namespace}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -50,6 +52,18 @@ _MAX_PREFERENCES = 100
 class MemoryStore:
     def __init__(self, path: Path | None = None, namespace: str = "default") -> None:
         self.path = path or _memory_path(namespace)
+        self._legacy_path: Path | None = None
+        if path is None:
+            try:
+                from .paths import legacy_memory_dir
+
+                legacy_root = legacy_memory_dir()
+                if legacy_root:
+                    candidate = legacy_root / f"{namespace}.json"
+                    if candidate.resolve(strict=False) != self.path.resolve(strict=False):
+                        self._legacy_path = candidate
+            except ImportError:
+                self._legacy_path = None
         self.data: dict[str, Any] = {
             "schema": "xander.memory/v1",
             "directives": [],
@@ -62,16 +76,21 @@ class MemoryStore:
             self._save()
 
     def _load(self) -> None:
-        if not self.path.exists():
-            return
-        try:
-            loaded = json.loads(self.path.read_text(encoding="utf-8"))
+        paths = [self.path]
+        if self._legacy_path:
+            paths.append(self._legacy_path)
+        for path in paths:
+            if not path.is_file():
+                continue
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
             if isinstance(loaded, dict):
                 self.data["directives"] = loaded.get("directives", [])
                 self.data["lessons"] = loaded.get("lessons", loaded.get("learnings", []))
                 self.data["preferences"] = loaded.get("preferences", [])
-        except Exception:
-            return
+                return
 
     def _save(self) -> None:
         temporary = self.path.with_suffix(".tmp")
@@ -163,16 +182,25 @@ class MemoryStore:
         return [text for _, _, text in scored[:limit]]
 
     def learn_from(self, task: TaskRecord) -> str:
-        if task.status != TaskStatus.COMPLETED:
-            return ""
         changed = sorted({path for result in task.results for path in result.changed_paths})
         checks = [result for result in task.check_results if result.status.value == "ok"]
-        if not checks:
-            return ""
-        lesson = (
-            f"For {task.subject or task.request.goal[:80]}, the verified approach changed "
-            f"{len(changed)} path(s) and passed: {', '.join(result.action_id for result in checks[:3])}."
-        )
+        subject = task.subject or task.request.goal[:80]
+        if task.status == TaskStatus.COMPLETED and checks:
+            lesson = (
+                f"For {subject}, the verified approach changed {len(changed)} path(s) "
+                f"and passed: {', '.join(result.action_id for result in checks[:3])}."
+            )
+        elif task.status == TaskStatus.COMPLETED:
+            lesson = (
+                f"For {subject}, {task.request.mode} completed with "
+                f"{len(task.evidence)} recorded evidence item(s); reuse the grounded evidence path."
+            )
+        else:
+            failure = " ".join((task.failure or "task did not verify").split())[:240]
+            lesson = (
+                f"For {subject}, the {task.request.mode} run ended {task.status.value}: {failure}. "
+                "On retry, do not repeat the failed approach unchanged; resolve the cause or choose a materially different route."
+            )
         fingerprint = hashlib.sha256(lesson.casefold().encode("utf-8")).hexdigest()
         if any(item.get("fingerprint") == fingerprint for item in self.data["lessons"]):
             return lesson
