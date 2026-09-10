@@ -21,11 +21,26 @@ class BoardTodo(StrictModel):
     evidence: str = ""
 
 
+class BoardGoal(StrictModel):
+    """A stored outcome the operator wants for this workspace.
+
+    Goals are direction, not authorization: storing one never starts work.
+    ``/work`` with no argument picks the newest open goal.
+    """
+
+    id: str = Field(default_factory=lambda: uuid4().hex[:12])
+    text: str
+    state: Literal["open", "done", "dropped"] = "open"
+    created_at: str = Field(default_factory=utc_now)
+    evidence: str = ""
+
+
 class Workboard(StrictModel):
     schema_: Literal["xander.workboard/v1"] = Field(
         default="xander.workboard/v1", alias="schema"
     )
     workspace: str
+    goals: list[BoardGoal] = Field(default_factory=list)
     todos: list[BoardTodo] = Field(default_factory=list)
     learning_focus: str = ""
     learning_sources: list[str] = Field(default_factory=list)
@@ -89,6 +104,33 @@ class WorkboardStore:
         board.todos.append(todo)
         self.save(board)
         return todo
+
+    def add_goal(self, board: Workboard, text: str) -> BoardGoal | None:
+        """Store a goal once; repeating an open goal returns the existing one."""
+
+        text = " ".join(text.split())
+        if not text:
+            return None
+        for goal in board.goals:
+            if goal.state == "open" and goal.text.casefold() == text.casefold():
+                return goal
+        goal = BoardGoal(text=text)
+        board.goals.append(goal)
+        board.goals = board.goals[-100:]
+        self.save(board)
+        return goal
+
+    def open_goals(self, board: Workboard) -> list[BoardGoal]:
+        return [goal for goal in board.goals if goal.state == "open"]
+
+    def set_goal_state(self, board: Workboard, goal_id: str, state: str, evidence: str = "") -> bool:
+        for goal in board.goals:
+            if goal.id == goal_id:
+                goal.state = state
+                goal.evidence = " ".join(evidence.split())
+                self.save(board)
+                return True
+        return False
 
     def set_learning(self, board: Workboard, focus: str, sources: list[str]) -> None:
         board.learning_focus = " ".join(focus.split())

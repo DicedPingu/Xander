@@ -7,12 +7,22 @@ folder …" spent four model attempts failing to become a coding plan, and
 "just write suggestions …" could never satisfy implement-mode acceptance
 checks. Text the operator types is data; this module decides which door
 it goes through, and it must stay cheap, offline, and predictable.
+
+Two rules from the working agreement shape the doors:
+
+* Anything beginning with ``/`` is a command. A known command is resolved
+  here; an unknown one is explained, never handed to a shell or a model.
+* Preparation must not silently become implementation. "This project is
+  going to be about …" opens a discussion; "Create …" or "Do …" authorizes
+  work; a line that is neither is held as a draft until the operator picks
+  ``/discuss`` or ``/work``. The draft is retained, so the choice is one word.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from difflib import get_close_matches
 from pathlib import Path
 
 # The operator-facing mode wheel (shift+tab in the TUI).
@@ -36,10 +46,122 @@ MODE_REQUESTS: dict[str, tuple[str, str | None]] = {
 
 
 @dataclass(frozen=True)
+class CommandSpec:
+    """One slash command the composer understands.
+
+    ``scope`` is ``core`` for commands with meaning outside the TUI (they
+    get their own intent kind) and ``tui`` for view/lifecycle shortcuts
+    that only the full-screen interface can act on.
+    """
+
+    name: str
+    usage: str
+    summary: str
+    kind: str
+    scope: str = "core"
+    aliases: tuple[str, ...] = ()
+    takes_argument: bool = False
+
+
+COMMANDS: tuple[CommandSpec, ...] = (
+    CommandSpec("/help", "/help", "list commands and keys", "help", aliases=("/how", "/commands")),
+    CommandSpec("/mode", "/mode [ask|plan|build|yolo]", "show or switch the mode wheel", "mode", takes_argument=True),
+    CommandSpec("/cd", "/cd <path>", "change the workspace folder", "chdir", takes_argument=True),
+    CommandSpec(
+        "/discuss",
+        "/discuss [topic]",
+        "talk it through — analysis, ideas, plans; nothing runs",
+        "discuss",
+        takes_argument=True,
+    ),
+    CommandSpec(
+        "/work",
+        "/work [goal]",
+        "authorize work on the goal, the kept draft, or the newest open goal",
+        "work",
+        takes_argument=True,
+    ),
+    CommandSpec(
+        "/research",
+        "/research <URL or topic>",
+        "read sources and report what was learned; the workspace is not modified",
+        "research",
+        takes_argument=True,
+    ),
+    CommandSpec(
+        "/goal",
+        "/goal [goal]",
+        "store a goal for this workspace, or list the stored goals",
+        "goal",
+        takes_argument=True,
+    ),
+    CommandSpec("/addtodo", "/addtodo <task>", "pin a TODO item for this workspace", "todo", takes_argument=True),
+    CommandSpec(
+        "/talk",
+        "/talk <message>",
+        "speak with the selected clone",
+        "talk",
+        aliases=("/ask",),
+        takes_argument=True,
+    ),
+    # Interface-only shortcuts. They keep their existing behavior in the TUI.
+    CommandSpec("/activity", "/activity", "show the Activity view", "command", scope="tui"),
+    CommandSpec("/controls", "/controls", "show the Controls view", "command", scope="tui"),
+    CommandSpec("/evidence", "/evidence", "show the Evidence view", "command", scope="tui", aliases=("/proof",)),
+    CommandSpec("/history", "/history", "show the Mission Library", "command", scope="tui"),
+    CommandSpec("/xander", "/xander", "show the Xander view", "command", scope="tui"),
+    CommandSpec("/loop", "/loop", "toggle the loop rail", "command", scope="tui"),
+    CommandSpec("/todos", "/todos", "toggle the pinned-work panel", "command", scope="tui"),
+    CommandSpec(
+        "/todo", "/todo [task]", "pin a TODO, or toggle the panel", "command", scope="tui", takes_argument=True
+    ),
+    CommandSpec("/pause", "/pause", "pause the running mission", "command", scope="tui"),
+    CommandSpec("/resume", "/resume", "resume the paused mission", "command", scope="tui"),
+    CommandSpec("/stop", "/stop", "contest the running mission", "command", scope="tui"),
+    CommandSpec("/cancel", "/cancel", "cancel the running mission", "command", scope="tui"),
+    CommandSpec("/new", "/new", "clear pending decisions and start fresh", "command", scope="tui"),
+    CommandSpec("/clear", "/clear", "clear the Activity log", "command", scope="tui"),
+    CommandSpec("/desktop", "/desktop", "take a local desktop screenshot", "command", scope="tui"),
+    CommandSpec(
+        "/set",
+        "/set mode|authority|setup|variant <value>",
+        "change one live value",
+        "command",
+        scope="tui",
+        takes_argument=True,
+    ),
+    CommandSpec("/values", "/values", "show the live values", "command", scope="tui"),
+)
+
+_COMMAND_INDEX: dict[str, CommandSpec] = {}
+for _spec in COMMANDS:
+    _COMMAND_INDEX[_spec.name] = _spec
+    for _alias in _spec.aliases:
+        _COMMAND_INDEX[_alias] = _spec
+
+
+def command_spec(name: str) -> CommandSpec | None:
+    return _COMMAND_INDEX.get(name.strip().casefold())
+
+
+def command_help(scope: str | None = None) -> list[str]:
+    """Readable ``usage — summary`` lines, core commands first."""
+
+    return [
+        f"{spec.usage} — {spec.summary}"
+        for spec in COMMANDS
+        if scope is None or spec.scope == scope
+    ]
+
+
+@dataclass(frozen=True)
 class Intent:
-    kind: str  # "chdir" | "mode" | "advice" | "order" | "help" | "feedback" | "selfwork"
+    kind: str
     argument: str = ""
     create: bool = False
+    command: str = ""
+    authorized: bool = False
+    reason: str = ""
 
 
 _CD_COMMAND = re.compile(r"^\s*/?cd\s+(?P<path>\S.*?)\s*$", re.IGNORECASE)
@@ -51,8 +173,7 @@ _CD_PHRASE = re.compile(
 )
 _CALLED = re.compile(r"\b(?:called|named)\s+[\"'`]?(?P<name>[\w.\\/-]+)", re.IGNORECASE)
 _CREATE_HINT = re.compile(r"\b(?:called|named|new|create|make)\b", re.IGNORECASE)
-_MODE_COMMAND = re.compile(r"^\s*/mode(?:\s+(?P<mode>[a-z-]+))?\s*$", re.IGNORECASE)
-_HELP_COMMAND = re.compile(r"^\s*/(?:help|how)\s*$", re.IGNORECASE)
+_SLASH_LINE = re.compile(r"^\s*(?P<name>/\S*)(?:\s+(?P<argument>.*?))?\s*$", re.DOTALL)
 
 # Standing likes/dislikes about how Xander works or writes. These are
 # preferences to remember, not work orders — even when typed mid-run.
@@ -80,6 +201,24 @@ _CONVERSATION_LINE = re.compile(
     r"let'?s talk|can we talk|i wonder|i'?m curious|what do you think)\b",
     re.IGNORECASE,
 )
+# Exploratory framing: the operator is setting the scene, not giving an
+# order. These open a discussion and keep the line as a draft.
+_EXPLORATORY_LEAD = re.compile(
+    r"^\s*(?:"
+    r"(?:this|the|my|our)\s+(?:new\s+)?(?:project|app|tool|idea|plan|repo|repository|service|site|game)"
+    r"\s+(?:is\s+going\s+to\s+be|will\s+be|is|would\s+be|should\s+be)\s+(?:about|for|a|an)\b|"
+    r"i(?:'m|\s+am|'ve\s+been|\s+have\s+been|\s+was)\s+(?:thinking|considering|wondering|planning|imagining)\b|"
+    r"i(?:'d|\s+would)\s+like\s+to\s+(?:discuss|talk|think|explore|brainstorm)\b|"
+    r"i\s+want\s+to\s+(?:discuss|talk|think|explore|brainstorm)\b|"
+    r"let'?s\s+(?:think|discuss|explore|brainstorm|consider|figure\s+out|plan|imagine)\b|"
+    r"(?:the|my|our)\s+(?:idea|plan|thought|goal|vision|dream)\s+(?:is|was|would\s+be)\b|"
+    r"idea\s*:|thought\s*:|"
+    r"what\s+if\b|maybe\s+we\b|perhaps\s+we\b|we\s+could\b|we\s+might\b|"
+    r"i\s+was\s+thinking\b|thinking\s+(?:about|of)\b|"
+    r"imagine\b|picture\s+this\b|here'?s\s+the\s+(?:idea|context|situation|background)\b"
+    r")",
+    re.IGNORECASE,
+)
 _SELF_WORK = re.compile(
     r"\b(?:improve|upgrade|fix|clean|optimi[sz]e|refactor)\s+yourself\b|"
     r"\bresearch\s+your\s+soul\b|\bmake\s+yourself\s+more\s+capable\b|"
@@ -94,19 +233,67 @@ _MUTATION_ORDER = re.compile(
     r".{0,80}?\b(?:file|folder|directory|test|module|class|function|script|project|repo|package|patch)\b",
     re.IGNORECASE,
 )
+# An imperative opening authorizes work: "Create …", "Do …", "Make …".
+# Politeness and a name in front do not change that.
+_AUTHORIZING_LEAD = re.compile(
+    r"^\s*(?:(?:please|xander|ok(?:ay)?|now|then|go\s+ahead\s+and|just),?\s+)*"
+    r"(?:create|do|make|build|implement|write|fix|add|run|install|refactor|remove|delete|rename|"
+    r"generate|migrate|wire|update|change|set\s+up|setup|scaffold|patch|apply|convert|port|deploy|"
+    r"test|replace|move|extract|split|merge|bump|upgrade|configure|enable|disable|turn|"
+    r"execute|start\s+(?:working|building|implementing)|go\s+ahead|proceed|ship|finish|complete|"
+    r"clean\s+up|optimi[sz]e|rewrite|reorganize|restructure|document|translate|render|compile)\b",
+    re.IGNORECASE,
+)
+
+
+def resolve_command(text: str) -> Intent | None:
+    """Resolve a ``/``-prefixed line, or return ``None`` when it is not one.
+
+    Every slash line resolves to *something*: a known command becomes its
+    intent, an unknown one becomes ``unknown_command`` with an explanation
+    (and the nearest known name when there is one). Slash lines never fall
+    through to shell or model routing.
+    """
+
+    match = _SLASH_LINE.match(text)
+    if not match:
+        return None
+    name = match.group("name").casefold()
+    argument = (match.group("argument") or "").strip()
+    spec = _COMMAND_INDEX.get(name)
+    if spec is None:
+        suggestions = get_close_matches(name, list(_COMMAND_INDEX), n=1, cutoff=0.6)
+        hint = f" Did you mean {suggestions[0]}?" if suggestions else ""
+        return Intent(
+            kind="unknown_command",
+            argument=argument,
+            command=name,
+            reason=f"{name} is not a Xander command; it was not run as shell.{hint} Type /help for the list.",
+        )
+    if spec.kind == "chdir":
+        if not argument:
+            return Intent(kind="unknown_command", command=spec.name, reason=f"Use {spec.usage}.")
+        return Intent(kind="chdir", argument=argument, command=spec.name)
+    if spec.kind == "mode":
+        return Intent(kind="mode", argument=argument.casefold(), command=spec.name)
+    authorized = spec.kind == "work"
+    return Intent(kind=spec.kind, argument=argument, command=spec.name, authorized=authorized)
 
 
 def parse_intent(text: str) -> Intent:
-    """Classify one operator line. Falls through to ``order`` on any doubt."""
+    """Classify one operator line.
+
+    Order of doors: slash commands, workspace changes, standing feedback,
+    explicit self-work, questions/advice, exploratory discussion, authorized
+    orders. What is left is a ``draft``: kept, not run.
+    """
 
     stripped = text.strip()
     if not stripped:
-        return Intent(kind="order", argument="")
-    if _HELP_COMMAND.match(stripped):
-        return Intent(kind="help")
-    mode_match = _MODE_COMMAND.match(stripped)
-    if mode_match:
-        return Intent(kind="mode", argument=(mode_match.group("mode") or "").lower())
+        return Intent(kind="draft", argument="", reason="nothing was typed")
+    command = resolve_command(stripped)
+    if command is not None:
+        return command
     cd_match = _CD_COMMAND.match(stripped)
     if cd_match:
         return Intent(kind="chdir", argument=cd_match.group("path"), create=False)
@@ -117,19 +304,34 @@ def parse_intent(text: str) -> Intent:
             argument=phrase_match.group("path"),
             create=bool(_CREATE_HINT.search(stripped)),
         )
-    if _FEEDBACK_LEAD.match(stripped) and not _MUTATION_ORDER.search(stripped):
+    mutation = bool(_MUTATION_ORDER.search(stripped))
+    if _FEEDBACK_LEAD.match(stripped) and not mutation:
         return Intent(kind="feedback", argument=stripped)
     if _SELF_WORK.search(stripped):
-        return Intent(kind="selfwork", argument=stripped)
+        return Intent(kind="selfwork", argument=stripped, authorized=True)
+    if _EXPLORATORY_LEAD.match(stripped) and not mutation:
+        # Scene-setting beats the generic question lead: "what if we …" is a
+        # discussion whose line is worth keeping as the draft.
+        return Intent(
+            kind="discuss",
+            argument=stripped,
+            reason="this reads as setting the scene, so it opens a discussion; /work authorizes it",
+        )
     advisory = bool(
         stripped.endswith("?")
         or _ADVICE_LEAD.match(stripped)
         or _ADVICE_ANY.search(stripped)
         or _CONVERSATION_LINE.match(stripped)
     )
-    if advisory and not _MUTATION_ORDER.search(stripped):
+    if advisory and not mutation:
         return Intent(kind="advice", argument=stripped)
-    return Intent(kind="order", argument=stripped)
+    if _AUTHORIZING_LEAD.match(stripped) or mutation:
+        return Intent(kind="order", argument=stripped, authorized=True, reason="imperative opening")
+    return Intent(
+        kind="draft",
+        argument=stripped,
+        reason="no imperative opening and no discussion framing; kept as a draft",
+    )
 
 
 def resolve_target(raw: str, workspace: Path) -> Path:

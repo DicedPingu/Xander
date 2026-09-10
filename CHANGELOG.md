@@ -8,6 +8,48 @@ declares `xander-agent 1.0.0`. Calibers and runtime knobs are documented in
 
 ---
 
+## [Unreleased] — Discussion-first routing and composer commands
+
+The working agreement's first two rules, made mechanical: "discuss before
+acting when intent is exploratory" and "anything beginning with `/` is a
+command". Touches `intents.py`, `workboard.py`, `tui.py`, `conversation.py`.
+
+### Added
+- **Command registry** (`intents.COMMANDS`, `resolve_command`,
+  `command_help`) — `/discuss`, `/work`, `/research`, `/goal`, `/addtodo`
+  join `/help`, `/mode`, `/cd`, `/talk`. Every `/` line resolves to a known
+  command or to `unknown_command` with an explanation and the nearest known
+  name; `/rm -rf /` and `/bin/sh …` are explained, never run. `/help` prints
+  the list.
+- **Discussion-first routing** — `parse_intent` now returns `discuss` for
+  scene-setting lines ("this project is going to be about …", "I'm thinking
+  of …", "what if we …"), `order` with `authorized=True` only for an
+  imperative opening or a clear artifact order, and `draft` for anything
+  unclear. The TUI opens a discussion for the first, runs the second, and
+  keeps the third as a draft with a one-line explanation. `/work` with no
+  argument runs the kept draft, else the newest open goal.
+- **Stored goals** (`BoardGoal`, `Workboard.goals`, `add_goal`,
+  `open_goals`, `set_goal_state`) — `/goal <goal>` stores direction without
+  starting work; `/goal` lists; the pinned-work rail shows open goals.
+- **`/research <URL or topic>`** dispatches a read-only `research` request
+  from the composer regardless of the mode wheel.
+
+### Fixed
+- `/mode …` and `/cd …` typed in the composer were reported as *Unknown
+  command*: the interface-only command handler ran before intent parsing and
+  swallowed them. All slash lines now go through one resolver, still ahead
+  of pending approvals and plan questions so `/cancel` keeps working
+  mid-decision.
+
+### Changed
+- A bare phrase in `build`/`yolo` mode ("second order", "Codewars client for
+  Android") no longer becomes an implementation task silently. It is kept as
+  a draft; `/work` authorizes it. In `plan` mode it is still planned.
+- The conversational prompt tells the model to point at `/work` rather than
+  Enter when the operator is really asking for work.
+
+---
+
 ## [Unreleased] — Missions, the opening, and the local-first default
 
 Missions, the opening styles, the caliber catalog and the local-first default,

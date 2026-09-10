@@ -121,9 +121,14 @@ def test_tui_queues_orders_and_answers_questions(tmp_path: Path, monkeypatch: py
             app._engine_busy = False
             app.task_state = "running"
 
-            # orders submitted while the engine is busy join the queue
+            # a bare phrase is not an order: it is kept as a draft, nothing queues
             app.on_input_submitted(Input.Submitted(goal_input, "second order"))
+            assert app._order_queue == []
+            assert app._draft == "second order"
+            # /work authorizes the kept draft; while the engine is busy it joins the queue
+            app.on_input_submitted(Input.Submitted(goal_input, "/work"))
             assert app._order_queue == [{"goal": "second order", "mode": "implement"}]
+            assert app._draft == ""
 
             # finishing the current run auto-starts the queued order
             app._finish({"ok": True, "status": "completed", "task_id": "t0", "task": {}, "handoff": {}})
@@ -370,3 +375,211 @@ def test_tui_task_refresh_filters_foreign_workspaces(
     rendered = "\n".join(captured["#tasks-log"])
     assert own.id in rendered and "own task" in rendered
     assert foreign.id not in rendered and "foreign task" not in rendered
+
+
+def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XANDER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("XANDER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("XANDER_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("XANDER_LOG_DIR", str(tmp_path / "logs"))
+
+
+def test_composer_resolves_every_slash_line_and_never_runs_unknown_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "xander_agent.tui.invoke_engine",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("a slash line reached the engine")),
+    )
+    monkeypatch.setattr(
+        "xander_agent.tui.talk",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("a slash line reached the model")),
+    )
+
+    async def scenario() -> None:
+        app = XanderApp(workspace=tmp_path, caller="human")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            field = app.query_one("#goal-input", Input)
+
+            # /mode and /cd used to be swallowed as "unknown" by the composer;
+            # they must route like the session commands they are.
+            app.on_input_submitted(Input.Submitted(field, "/mode plan"))
+            assert app.mode == "plan"
+            assert app.autonomy == "proposal-only"
+            sub = tmp_path / "sub"
+            sub.mkdir()
+            app.on_input_submitted(Input.Submitted(field, "/cd sub"))
+            assert app.workspace == sub.resolve()
+
+            for line in ("/rm -rf /", "/bin/sh -c 'echo hi'", "/reserch python", "/"):
+                app.on_input_submitted(Input.Submitted(field, line))
+                assert field.value == ""
+                assert app.task_state == "idle"
+            assert app._order_queue == []
+
+            # a pending approval never receives a slash line as its answer
+            from threading import Event
+
+            app._pending_approval = {"event": Event(), "approved": False}
+            app.task_state = "approval"
+            app.on_input_submitted(Input.Submitted(field, "/values"))
+            assert app._pending_approval is not None
+            app._pending_approval = None
+            app.task_state = "idle"
+
+            app.on_input_submitted(Input.Submitted(field, "/help"))
+            await pilot.pause()
+
+    asyncio.run(scenario())
+    transcript = (tmp_path / "logs" / "xander.log").read_text(encoding="utf-8")
+    assert "unknown command explained, not run: /rm" in transcript
+    assert "unknown command explained, not run: /bin/sh" in transcript
+    assert "unknown command explained, not run: /reserch" in transcript
+
+
+def test_discussion_first_routing_keeps_the_draft_until_work_is_authorized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    engine_calls: list[tuple[str, dict]] = []
+    chat_calls: list[str] = []
+
+    def fake_invoke(mode: str, **kwargs) -> dict:
+        engine_calls.append((mode, kwargs))
+        return {"ok": True, "status": "completed", "task_id": "t-work", "task": {}, "handoff": {}}
+
+    def fake_talk(workspace: Path, variant: str, message: str, history: list[dict[str, str]]) -> dict:
+        chat_calls.append(message)
+        return {"text": f"thoughts on {message}", "role": "critic", "stats": {"model": "test-model"}}
+
+    monkeypatch.setattr("xander_agent.tui.invoke_engine", fake_invoke)
+    monkeypatch.setattr("xander_agent.tui.talk", fake_talk)
+
+    async def scenario() -> None:
+        app = XanderApp(workspace=tmp_path, caller="human", autonomy="supervised")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            field = app.query_one("#goal-input", Input)
+
+            # scene-setting opens a discussion: model yes, engine no, draft kept
+            app.on_input_submitted(Input.Submitted(field, "This project is going to be about a Codewars client"))
+            for _ in range(50):
+                await pilot.pause(0.05)
+                if not app._chat_busy:
+                    break
+            assert chat_calls == ["This project is going to be about a Codewars client"]
+            assert engine_calls == []
+            assert app._draft == "This project is going to be about a Codewars client"
+            assert app.task_state == "idle"
+
+            # an unclear phrase in build mode is held, not run
+            app.on_input_submitted(Input.Submitted(field, "Codewars client for Android"))
+            assert engine_calls == []
+            assert app._draft == "Codewars client for Android"
+            assert app.task_state == "idle"
+
+            # /work with no argument authorizes the kept draft
+            app.on_input_submitted(Input.Submitted(field, "/work"))
+            for _ in range(50):
+                await pilot.pause(0.05)
+                if engine_calls and app.task_state == "complete":
+                    break
+            assert [(mode, kwargs["goal"]) for mode, kwargs in engine_calls] == [
+                ("implement", "Codewars client for Android")
+            ]
+            assert engine_calls[0][1]["autonomy"] == "supervised"
+            assert app._draft == ""
+
+            # an imperative opening authorizes work directly
+            app.on_input_submitted(Input.Submitted(field, "Create a README for the client"))
+            for _ in range(50):
+                await pilot.pause(0.05)
+                if len(engine_calls) == 2 and app.task_state == "complete":
+                    break
+            assert engine_calls[1][1]["goal"] == "Create a README for the client"
+
+    asyncio.run(scenario())
+    transcript = (tmp_path / "logs" / "xander.log").read_text(encoding="utf-8")
+    assert "draft kept (not run): Codewars client for Android" in transcript
+
+
+def test_unclear_lines_in_plan_mode_are_prepared_not_implemented(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    engine_calls: list[tuple[str, dict]] = []
+
+    def fake_invoke(mode: str, **kwargs) -> dict:
+        engine_calls.append((mode, kwargs))
+        return {"ok": True, "status": "completed", "task_id": "t-plan", "task": {}, "handoff": {}}
+
+    monkeypatch.setattr("xander_agent.tui.invoke_engine", fake_invoke)
+
+    async def scenario() -> None:
+        app = XanderApp(workspace=tmp_path, caller="human", mode="plan")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            field = app.query_one("#goal-input", Input)
+            app.on_input_submitted(Input.Submitted(field, "Codewars client for Android"))
+            for _ in range(50):
+                await pilot.pause(0.05)
+                if engine_calls:
+                    break
+
+    asyncio.run(scenario())
+    assert [mode for mode, _ in engine_calls] == ["plan"]
+    assert engine_calls[0][1]["goal"] == "Codewars client for Android"
+
+
+def test_goal_addtodo_and_research_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    engine_calls: list[tuple[str, dict]] = []
+
+    def fake_invoke(mode: str, **kwargs) -> dict:
+        engine_calls.append((mode, kwargs))
+        return {"ok": True, "status": "completed", "task_id": "t-research", "task": {}, "handoff": {}}
+
+    monkeypatch.setattr("xander_agent.tui.invoke_engine", fake_invoke)
+
+    async def scenario() -> None:
+        app = XanderApp(workspace=tmp_path, caller="human")
+        async with app.run_test(size=(120, 48)) as pilot:
+            await pilot.pause()
+            field = app.query_one("#goal-input", Input)
+
+            app.on_input_submitted(Input.Submitted(field, "/goal ship a verified APK"))
+            app.on_input_submitted(Input.Submitted(field, "/goal solve a 3 kyu kata"))
+            app.on_input_submitted(Input.Submitted(field, "/addtodo write the profile README"))
+            assert engine_calls == []
+            assert [goal.text for goal in app._workboard.goals] == ["ship a verified APK", "solve a 3 kyu kata"]
+            assert [todo.text for todo in app._workboard.todos] == ["write the profile README"]
+            # goals survive a reload of the workspace record
+            reloaded = app._workboard_store.load(tmp_path)
+            assert [goal.text for goal in reloaded.goals] == ["ship a verified APK", "solve a 3 kyu kata"]
+            panel = str(app.query_one("#todo-log", Static).render())
+            assert "Goals" in panel and "solve a 3 kyu kata" in panel
+
+            # /research runs read-only research regardless of the build mode wheel
+            app.on_input_submitted(Input.Submitted(field, "/research https://docs.python.org/3/library/importlib.html"))
+            for _ in range(50):
+                await pilot.pause(0.05)
+                if engine_calls and app.task_state == "complete":
+                    break
+            assert [(mode, kwargs["goal"]) for mode, kwargs in engine_calls] == [
+                ("research", "https://docs.python.org/3/library/importlib.html")
+            ]
+
+            # /work with no draft falls back to the newest open goal
+            app.on_input_submitted(Input.Submitted(field, "/work"))
+            for _ in range(50):
+                await pilot.pause(0.05)
+                if len(engine_calls) == 2 and app.task_state == "complete":
+                    break
+            assert engine_calls[1][0] == "implement"
+            assert engine_calls[1][1]["goal"] == "solve a 3 kyu kata"
+
+    asyncio.run(scenario())
+    transcript = (tmp_path / "logs" / "xander.log").read_text(encoding="utf-8")
+    assert "goal stored: ship a verified APK" in transcript

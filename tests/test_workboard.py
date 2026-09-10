@@ -28,6 +28,44 @@ def test_workboard_persists_todos_learning_and_contest_comments(tmp_path: Path) 
     assert loaded.observed_lessons == ["exit codes beat intended behavior"]
 
 
+def test_workboard_stores_goals_once_and_lists_only_open_ones(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = WorkboardStore(root=tmp_path / "boards")
+    board = store.load(workspace)
+
+    first = store.add_goal(board, "  ship a  verified APK ")
+    assert first is not None and first.text == "ship a verified APK"
+    assert store.add_goal(board, "Ship A Verified APK") is first  # repeated open goal is not duplicated
+    second = store.add_goal(board, "solve a 3 kyu kata")
+    assert store.add_goal(board, "   ") is None
+    assert [goal.text for goal in store.open_goals(board)] == ["ship a verified APK", "solve a 3 kyu kata"]
+
+    assert store.set_goal_state(board, first.id, "done", "apk built and installed")
+    assert not store.set_goal_state(board, "missing", "done")
+
+    loaded = store.load(workspace)
+    assert [goal.text for goal in store.open_goals(loaded)] == ["solve a 3 kyu kata"]
+    assert loaded.goals[0].state == "done"
+    assert loaded.goals[0].evidence == "apk built and installed"
+    assert loaded.goals[1].id == second.id
+
+
+def test_workboard_without_goals_field_still_loads(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = WorkboardStore(root=tmp_path / "boards")
+    board = store.load(workspace)
+    store.add_todo(board, "older record")
+    path = store.path(workspace)
+    data = path.read_text(encoding="utf-8").replace('  "goals": [],\n', "")
+    path.write_text(data, encoding="utf-8")
+    assert '"goals"' not in data
+    loaded = store.load(workspace)
+    assert loaded.goals == []
+    assert loaded.todos[0].text == "older record"
+
+
 def test_todo_sequence_runs_one_item_at_a_time_and_records_lessons(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XANDER_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("XANDER_CONFIG_DIR", str(tmp_path / "config"))

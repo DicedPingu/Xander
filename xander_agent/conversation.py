@@ -114,8 +114,8 @@ def talk(
         "evidence than historical campaign notes. Copy every exact command and path from a named "
         "local source above; never invent one. If the evidence does not contain an exact answer, "
         "say that it is not verified. Never claim you changed, ran, tested, or proved anything in "
-        "chat. If the operator is actually asking for work, say briefly that Enter can run it as "
-        "autonomous work and state what outcome you understood."
+        "chat. If the operator is actually asking for work, say briefly that /work runs it as "
+        "autonomous work and state what outcome you understood; discussion never starts work by itself."
     )
     system = (
         "You are the conversational side of Xander. Conversation is not a task record. "

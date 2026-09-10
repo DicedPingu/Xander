@@ -88,6 +88,29 @@ see the screen. A real battery reporting `0%` cancels active work, records the
 stop, and sends one `systemctl poweroff` request; missing battery telemetry is
 treated as unknown, never as zero.
 
+The composer reads plain language discussion-first. A question is a
+conversation. "This project is going to be about …", "I'm thinking of …",
+"what if we …" open a **discussion** and keep the line as a draft; nothing
+runs. "Create …", "Do …", "Make …", "Fix …" — an imperative opening — is
+**work**, and runs. A line that is neither is **kept as a draft** and Xander
+says so; `/discuss` talks it through, `/work` runs it. In `plan` mode an
+unclear line is still prepared, because planning applies nothing.
+
+Anything starting with `/` is a command; an unknown one is explained, never
+handed to a shell or a model:
+
+```text
+/discuss [topic]          talk it through — analysis, ideas, plans; nothing runs
+/work [goal]              authorize work: the goal, else the kept draft, else the newest stored goal
+/research <URL or topic>  read sources and report what was learned; the workspace is not modified
+/goal [goal]              store a goal for this workspace (direction, not authorization) or list them
+/addtodo <task>           pin a TODO item for this workspace
+/mode [ask|plan|build|yolo] · /cd <path> · /talk <message> · /help
+```
+
+Goals and TODOs live in the workspace's workboard record under
+`state/workboards/` and show in the pinned-work rail.
+
 - Orders submitted while the engine is busy are **queued** and start
   automatically when the current one finishes.
 - When a plan needs a decision, Xander **asks underway**: a numbered

@@ -25,7 +25,7 @@ from textual.widgets import Button, Collapsible, ContentSwitcher, Input, Label, 
 from . import MANTRA_PHASES
 from .cli import invoke_engine
 from .conversation import talk
-from .intents import Intent, MODE_HELP, MODE_REQUESTS, parse_intent, resolve_target
+from .intents import Intent, MODE_HELP, MODE_REQUESTS, command_help, parse_intent, resolve_target
 from .narrator import Narrator, STATUS_GLYPHS, _short, abilities_line
 from .mission import MissionStore
 from .power import PowerStatus, PowerZeroGuard, read_power_status
@@ -436,12 +436,15 @@ class XanderApp(App[None]):
         self._conversation: list[dict[str, str]] = []
         self._chat_busy = False
         self._chat_queue: list[str] = []
+        # The last line that opened a discussion or was held as unclear.
+        # ``/work`` with no argument runs it; ``/discuss`` talks it through.
+        self._draft = ""
         self._active_run_mode = mode
         self._focus_work = "Waiting for an outcome"
         self._focus_thought = "Give Xander one outcome to understand and prove."
         self._focus_decision = "No decision yet."
         self._focus_change = "Nothing changed yet."
-        self._focus_next = "Describe the result you want, then press Enter."
+        self._focus_next = "Start with create, do, or make to authorize work · /discuss to think first · /help for commands."
         self._activity_counts: dict[str, int] = {}
         self._mission_constraints: list[str] = []
         self._mission_allowed_paths: list[str] = []
@@ -994,6 +997,10 @@ class XanderApp(App[None]):
         todo_matches = self.query("#todo-log")
         if len(todo_matches):
             lines = []
+            open_goals = self._workboard_store.open_goals(self._workboard)
+            if open_goals:
+                lines.append("[bold #89ddff]Goals[/] [dim](/goal · /work runs the newest)[/]")
+                lines.extend(f"[#89ddff]◎[/] {escape(goal.text)}" for goal in open_goals[-6:])
             for todo in self._workboard.todos:
                 glyph = {"done": "✓", "active": "▸", "blocked": "!"}.get(todo.state, "·")
                 style = {"done": "green", "active": "bold #ffcb6b", "blocked": "bold #ff5370"}.get(todo.state, "dim")
@@ -1642,7 +1649,7 @@ class XanderApp(App[None]):
             self._conversation.append({"role": "assistant", "content": answer})
             self._conversation = self._conversation[-24:]
             self._focus_thought = _short(answer, 150)
-            self._focus_next = "Keep talking, or give a concrete work outcome and it will run automatically."
+            self._focus_next = "Keep talking, or type /work to run what we discussed as autonomous work."
             self.query_one("#run-log", RichLog).write(
                 f"[bold #f78c6c]{escape(variant)}[/] [dim]via {escape(model)}[/]\n{escape(answer)}"
             )
@@ -1653,19 +1660,15 @@ class XanderApp(App[None]):
             self._start_chat(self._chat_queue.pop(0))
 
     # -- orders ----------------------------------------------------------------
-    def _handle_composer_command(self, value: str) -> bool:
-        if not value.startswith("/"):
-            return False
-        command, _, argument = value.partition(" ")
-        command = command.casefold()
-        argument = argument.strip()
-        field = self.query_one("#goal-input", Input)
-        field.value = ""
+    def _handle_composer_command(self, intent: Intent) -> bool:
+        """Run one interface-only slash command (``intent.kind == "command"``)."""
+
+        command = intent.command
+        argument = intent.argument
         views = {
             "/activity": "activity-view",
             "/controls": "controls-view",
             "/evidence": "evidence-view",
-            "/proof": "evidence-view",
             "/history": "history-view",
             "/xander": "system-view",
         }
@@ -1686,18 +1689,11 @@ class XanderApp(App[None]):
         if command in actions:
             actions[command]()
             return True
-        if command in {"/ask", "/talk"}:
-            if not argument:
-                self.notify("Use /talk <message> to speak with the selected clone.", title="Conversation")
-                return True
-            self._start_chat(argument)
-            return True
         if command == "/todo":
             if not argument:
                 self.action_toggle_todos()
                 return True
-            self.query_one("#todo-input", Input).value = argument
-            self._add_todo()
+            self._add_todo_text(argument)
             return True
         if command == "/set":
             key, _, selected = argument.partition(" ")
@@ -1724,11 +1720,169 @@ class XanderApp(App[None]):
                 title="Live values",
             )
             return True
-        if command in {"/help", "/how"}:
+        return False
+
+    def _explain_unknown_command(self, intent: Intent) -> None:
+        self.query_one("#run-log", RichLog).write(
+            f"[bold yellow]Unknown command[/] {escape(intent.command)} — {escape(intent.reason)}"
+        )
+        self.notify(f"Unknown command: {intent.command}. Type /help.", title="Composer")
+        self.narrator.record(f"unknown command explained, not run: {intent.command}", task_id=self.task_id)
+
+    def _write_command_help(self) -> None:
+        log = self.query_one("#run-log", RichLog)
+        log.write(
+            "[bold #ffcb6b]Commands[/] [dim]anything starting with / is a command; "
+            "an unknown one is explained, never run[/]"
+        )
+        for line in command_help("core"):
+            usage, _, summary = line.partition(" — ")
+            log.write(f"  [bold]{escape(usage)}[/] [dim]{escape(summary)}[/]")
+        interface = "  ".join(line.partition(" — ")[0] for line in command_help("tui"))
+        log.write(f"  [dim]interface: {escape(interface)}[/]")
+        log.write(
+            "[dim]Plain language: a question is a conversation · \"this project is going to be about …\" "
+            "opens a discussion · \"create …\" or \"do …\" authorizes work · anything unclear is kept "
+            "as a draft for /discuss or /work.[/]"
+        )
+
+    def _keep_draft(self, text: str, reason: str) -> None:
+        """Hold an unclear line instead of guessing between talk and work."""
+
+        self._draft = text
+        self._focus_thought = "Not sure whether that is discussion or an order, so nothing ran."
+        self._focus_next = "/discuss talks it through · /work runs it · or start with create, do, make."
+        self._refresh_focus()
+        self.query_one("#run-log", RichLog).write(
+            f"[bold #c792ea]Kept as a draft[/] {escape(_short(text, 120))}\n"
+            f"[dim]{escape(reason)}. /discuss talks it through, /work runs it as work; "
+            "starting a line with create, do, make, or fix authorizes work directly.[/]"
+        )
+        self.narrator.record(f"draft kept (not run): {text}", task_id=self.task_id)
+
+    def _start_discussion(self, text: str) -> None:
+        """Open a discussion and keep the line as the draft ``/work`` would run."""
+
+        self._draft = text
+        self.query_one("#run-log", RichLog).write(
+            "[bold #c792ea]Discussion[/] [dim]analysis, ideas, and planning only · /work authorizes it later[/]"
+        )
+        self._start_chat(text)
+
+    def _authorize_work(self, argument: str) -> None:
+        """``/work``: the given goal, else the kept draft, else the newest open goal."""
+
+        goal = argument.strip()
+        source = "typed"
+        if not goal and self._draft:
+            goal, source = self._draft, "draft"
+        if not goal:
+            open_goals = self._workboard_store.open_goals(self._workboard)
+            if open_goals:
+                goal, source = open_goals[-1].text, "stored goal"
+        run_log = self.query_one("#run-log", RichLog)
+        if not goal:
+            run_log.write(
+                "[bold yellow]Nothing to work on[/] — /work <goal>, or discuss something first, "
+                "or store one with /goal."
+            )
+            return
+        self._draft = ""
+        engine_mode = self.mode if self.mode != "answer" else "implement"
+        run_log.write(f"[bold #ffcb6b]Work authorized[/] [dim]({source})[/] {escape(_short(goal, 120))}")
+        self._dispatch_or_queue(goal, engine_mode)
+
+    def _run_research(self, argument: str) -> None:
+        subject = argument.strip()
+        run_log = self.query_one("#run-log", RichLog)
+        if not subject:
+            run_log.write("[bold yellow]Research needs a subject[/] — /research <URL or topic>")
+            return
+        run_log.write(
+            f"[bold #82aaff]Research[/] {escape(_short(subject, 120))} "
+            "[dim]read-only · sources and limits are reported[/]"
+        )
+        self._dispatch_or_queue(subject, "research")
+
+    def _store_goal(self, argument: str) -> None:
+        run_log = self.query_one("#run-log", RichLog)
+        text = argument.strip()
+        if not text:
+            open_goals = self._workboard_store.open_goals(self._workboard)
+            if not open_goals:
+                run_log.write("[dim]No stored goals for this workspace. /goal <goal> stores one.[/]")
+                return
+            run_log.write("[bold #89ddff]Stored goals[/] [dim]newest last · /work runs the newest[/]")
+            for goal in open_goals:
+                run_log.write(f"  [dim]{escape(goal.id)}[/] {escape(goal.text)}")
+            return
+        goal = self._workboard_store.add_goal(self._workboard, text)
+        if goal is None:
+            return
+        self._refresh_workboard()
+        self._refresh_focus()
+        run_log.write(
+            f"[bold #89ddff]Goal stored[/] {escape(goal.text)} "
+            "[dim](direction only — nothing runs until /work)[/]"
+        )
+        self.narrator.record(f"goal stored: {goal.text}", task_id=self.task_id)
+
+    def _add_todo_text(self, text: str) -> None:
+        self.query_one("#todo-input", Input).value = text
+        self._add_todo()
+
+    def _route_command(self, intent: Intent) -> None:
+        """Act on one resolved slash command."""
+
+        kind = intent.kind
+        if kind == "unknown_command":
+            self._explain_unknown_command(intent)
+        elif kind == "help":
+            self._write_command_help()
             self.action_help()
-            return True
-        self.notify(f"Unknown command: {command}. Type /help.", title="Composer")
-        return True
+        elif kind == "mode":
+            self._set_mode(intent.argument)
+        elif kind == "chdir":
+            self._rebind_workspace(intent)
+        elif kind == "discuss":
+            topic = intent.argument or self._draft
+            if not topic:
+                self.query_one("#run-log", RichLog).write(
+                    "[bold yellow]Nothing to discuss yet[/] — /discuss <topic>, or just describe the idea."
+                )
+                return
+            self._start_discussion(topic)
+        elif kind == "work":
+            self._authorize_work(intent.argument)
+        elif kind == "research":
+            self._run_research(intent.argument)
+        elif kind == "goal":
+            self._store_goal(intent.argument)
+        elif kind == "todo":
+            if not intent.argument:
+                self.notify("Use /addtodo <task>.", title="TODO")
+                return
+            self._add_todo_text(intent.argument)
+        elif kind == "talk":
+            if not intent.argument:
+                self.notify("Use /talk <message> to speak with the selected clone.", title="Conversation")
+                return
+            self._start_chat(intent.argument)
+        elif kind == "command" and self._handle_composer_command(intent):
+            return
+        else:
+            self._explain_unknown_command(
+                Intent(kind="unknown_command", command=intent.command or "/", reason="this command has no handler here")
+            )
+
+    def _dispatch_or_queue(self, goal: str, engine_mode: str) -> None:
+        if self.task_state == "running" or self._engine_busy:
+            self._order_queue.append({"goal": goal, "mode": engine_mode})
+            self.query_one("#run-log", RichLog).write(
+                f"[dim]＋ queued order #{len(self._order_queue)}:[/] {escape(_short(goal, 100))}"
+            )
+            return
+        self._dispatch(goal, engine_mode)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if self.task_state == "power-zero":
@@ -1748,7 +1902,12 @@ class XanderApp(App[None]):
         value = event.value.strip()
         if not value:
             return
-        if event.input.id == "goal-input" and self._handle_composer_command(value):
+        goal_input = self.query_one("#goal-input", Input)
+        if event.input.id == "goal-input" and value.startswith("/"):
+            # Every slash line is a command: resolved, or explained. It never
+            # reaches an approval prompt, a shell, or a model as plain text.
+            goal_input.value = ""
+            self._route_command(parse_intent(value))
             return
         if self._pending_approval is not None:
             self._answer_approval(value)
@@ -1759,7 +1918,7 @@ class XanderApp(App[None]):
         if self._retry_task_id and value.casefold() in {"retry", "try again"}:
             task_id = self._retry_task_id
             self._retry_task_id = None
-            self.query_one("#goal-input", Input).value = ""
+            goal_input.value = ""
             self.task_state = "running"
             self.query_one("#run-log", RichLog).write(
                 f"[bold #ffcb6b]▶ retrying[/] [dim]{escape(task_id)} in {escape(str(self.workspace))}[/]"
@@ -1767,15 +1926,6 @@ class XanderApp(App[None]):
             self._run_resume(task_id, [])
             return
         intent = parse_intent(value)
-        goal_input = self.query_one("#goal-input", Input)
-        if intent.kind == "help":
-            goal_input.value = ""
-            self.action_help()
-            return
-        if intent.kind == "mode":
-            goal_input.value = ""
-            self._set_mode(intent.argument)
-            return
         if intent.kind == "chdir":
             goal_input.value = ""
             self._rebind_workspace(intent)
@@ -1807,19 +1957,24 @@ class XanderApp(App[None]):
             goal_input.value = ""
             self._record_feedback(value)
             return
+        if intent.kind == "discuss":
+            goal_input.value = ""
+            self._start_discussion(value)
+            return
         if intent.kind == "advice" or self.mode == "answer":
             self._start_chat(value)
             return
-        engine_mode = self.mode
-        if self.task_state == "running" or self._engine_busy:
-            self._order_queue.append({"goal": value, "mode": engine_mode})
+        if intent.kind == "draft":
             goal_input.value = ""
-            self.query_one("#run-log", RichLog).write(
-                f"[dim]＋ queued order #{len(self._order_queue)}:[/] {escape(_short(value, 100))}"
-            )
+            if self.mode == "plan":
+                # Planning applies nothing, so an unclear line may still be prepared.
+                self._dispatch_or_queue(value, self.mode)
+                return
+            self._keep_draft(value, intent.reason)
             return
         goal_input.value = ""
-        self._dispatch(value, engine_mode)
+        self._draft = ""
+        self._dispatch_or_queue(value, self.mode)
 
     def _approve_action(self, action: Any, reason: str) -> bool:
         decision = Event()
@@ -1927,7 +2082,7 @@ class XanderApp(App[None]):
         self._focus_thought = "Give Xander one outcome to understand and prove."
         self._focus_decision = "No decision yet."
         self._focus_change = "Nothing changed yet."
-        self._focus_next = "Describe the result you want, then press Enter."
+        self._focus_next = "Start with create, do, or make to authorize work · /discuss to think first · /help for commands."
         self._activity_counts = {}
         self._retry_task_id = None
         self.task_id = "new"
@@ -2017,7 +2172,9 @@ class XanderApp(App[None]):
             return
         if not self._capture_control_inputs():
             return
-        if engine_mode != "answer":
+        if engine_mode not in {"answer", "research"}:
+            # The live mode wheel wins for ordinary work; explicit read-only
+            # requests (/research) keep their own mode.
             engine_mode = self.mode
         self._active_run_mode = engine_mode
         self.goal = goal
