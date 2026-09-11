@@ -1,410 +1,162 @@
-"""Textual interface for Xander's task loop.
+"""Xander's terminal: one feed, one composer, nothing else.
 
-The visual language borrows Monica's compact, keyboard-first warmth without
-importing or modifying Monica's implementation. Events arrive as structured
-payloads and are narrated by :mod:`xander_agent.narrator` so following a run
-feels like reading a good build log, not a JSON dump.
+There are no tabs. Everything Xander does — what you said, what he did,
+what he asks, what he answers — lands in one scrollable feed in the order
+it happened. The feed is ordinary text: select it with the mouse and
+Ctrl+C copies it. The composer keeps a history: ↑ and ↓ walk it.
+
+Every line you type is shown in the feed before anything happens to it,
+including lines typed while a mission is running; those are handed to the
+engine at its next safe point instead of being lost.
 """
 
 from __future__ import annotations
 
 import re
-import subprocess
-from threading import Event
 from pathlib import Path
+from threading import Event, Lock
 from typing import Any
 
 from rich.markup import escape
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.reactive import reactive
-from textual.widgets import Button, Collapsible, ContentSwitcher, Input, Label, RichLog, Select, Static
+from textual.widgets import Input, Static
 
-from . import MANTRA_PHASES
 from .cli import invoke_engine
 from .conversation import talk
-from .intents import Intent, MODE_HELP, MODE_REQUESTS, command_help, parse_intent, resolve_target
-from .narrator import Narrator, STATUS_GLYPHS, _short, abilities_line
+from .intents import Intent, MODE_HELP, MODE_REQUESTS, MODES, command_help, parse_intent, resolve_target
 from .mission import MissionStore
+from .narrator import Narrator, _short
 from .power import PowerStatus, PowerZeroGuard, read_power_status
-from .workboard import BoardTodo, WorkboardStore
+from .workboard import WorkboardStore
 
-_PHASE_INDEXES = {
-    "analyze": 0,
-    "research": 1,
-    "set_up": 2,
-    "set yourself up": 2,
-    "work": 3,
-    "test": 4,
-    "judge_log": 5,
-    "judge/log": 5,
-    "learn": 6,
-    "repeat": 7,
-}
+_YOU = "#82aaff"
+_XANDER = "#f78c6c"
+_OK = "#c3e88d"
+_WARN = "#ffcb6b"
+_BAD = "#ff5370"
+_DIM = "#6b7280"
+_ASK = "#c792ea"
 
-_CHANNELS = {
-    "run": "#run-log",
-    "research": "#research-log",
-    "plan": "#plan-log",
-    "diff": "#diff-log",
-    "tests": "#tests-log",
+# Phase names → what the operator sees while it happens. Short, present tense.
+_PHASE_TEXT = {
+    "analyze": "looking at the workspace",
+    "research": "reading up",
+    "set_up": "getting ready",
+    "work": "working",
+    "test": "checking",
+    "judge_log": "judging the result",
+    "learn": "noting the lesson",
+    "repeat": "trying a different approach",
 }
-
-_VIEW_BUTTONS = {
-    "activity-view": "#nav-activity",
-    "controls-view": "#nav-controls",
-    "evidence-view": "#nav-evidence",
-    "history-view": "#nav-history",
-    "system-view": "#nav-system",
-}
+_STOP_WORDS = re.compile(r"^\s*(?:stop|cancel|abort|halt|quit that|never mind|nevermind)\b", re.IGNORECASE)
 
 
 def _repository_status(workspace: Path) -> tuple[str, int]:
+    import subprocess
+
     try:
-        probe = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
+        inside = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=workspace, capture_output=True, text=True, timeout=5,
         )
-        if probe.returncode != 0:
-            return "not-git", 0
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            return "", 0
         branch = subprocess.run(
-            ["git", "branch", "--show-current"],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=workspace, capture_output=True, text=True, timeout=5,
         ).stdout.strip()
-        dirty_run = subprocess.run(
-            ["git", "status", "--short"],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
-        if dirty_run.returncode != 0:
-            return "not-git", 0
-        return branch or "detached", len(dirty_run.stdout.splitlines())
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=workspace, capture_output=True, text=True, timeout=5,
+        ).stdout.splitlines()
+        return branch or "detached", len(dirty)
     except (OSError, subprocess.SubprocessError):
-        return "not-git", 0
+        return "", 0
 
 
 def _xander_workspace() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parent.parent
+
+
+def _wheel_for(engine_mode: str, autonomy: str | None) -> str:
+    if engine_mode == "answer":
+        return "ask"
+    if engine_mode == "plan":
+        return "plan"
+    return "yolo" if autonomy == "full-auto" else "build"
+
+
+class Composer(Input):
+    """The input line, with ↑/↓ history and Shift+Tab as the mode wheel."""
+
+    BINDINGS = [
+        Binding("up", "history_back", "Previous", show=False),
+        Binding("down", "history_forward", "Next", show=False),
+    ]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.history: list[str] = []
+        self._cursor = 0
+        self._stash = ""
+
+    def remember(self, text: str) -> None:
+        if text and (not self.history or self.history[-1] != text):
+            self.history.append(text)
+            self.history = self.history[-200:]
+        self._cursor = len(self.history)
+        self._stash = ""
+
+    def action_history_back(self) -> None:
+        if not self.history:
+            return
+        if self._cursor == len(self.history):
+            self._stash = self.value
+        if self._cursor > 0:
+            self._cursor -= 1
+            self.value = self.history[self._cursor]
+            self.cursor_position = len(self.value)
+
+    def action_history_forward(self) -> None:
+        if not self.history or self._cursor >= len(self.history):
+            return
+        self._cursor += 1
+        self.value = self.history[self._cursor] if self._cursor < len(self.history) else self._stash
+        self.cursor_position = len(self.value)
 
 
 class XanderApp(App[None]):
-    """A task-focused shell shared by the standalone and sidecar workflows."""
-
-    TITLE = "Xander"
-    SUB_TITLE = "local coding agent"
-    CSS = """
-    Screen {
-        background: #11151d;
-        color: #d7dae0;
-    }
-    #status-bar {
-        height: 1;
-        padding: 0 2;
-        color: #9aa4b5;
-        background: #1b202b;
-    }
-    #mission-banner {
-        height: 3;
-        padding: 0 2;
-        color: #d7dae0;
-        background: #171c25;
-        border-bottom: solid #303847;
-    }
-    #workspace-body {
-        height: 1fr;
-    }
-    #loop-rail {
-        width: 36;
-        min-width: 30;
-        height: 1fr;
-        padding: 0 1;
-        background: #141922;
-        border-right: solid #303847;
-        scrollbar-size: 0 1;
-        scrollbar-color: #3c4454;
-        scrollbar-background: #141922;
-    }
-    Screen.loop-collapsed #loop-rail {
-        display: none;
-    }
-    #loop-heading {
-        height: 3;
-        padding: 1 1 0 1;
-        color: #89ddff;
-    }
-    #loop-log {
-        height: auto;
-        min-height: 7;
-        padding: 0 1;
-        border: none;
-        background: #141922;
-    }
-    #loop-help {
-        height: 2;
-        padding: 0 1;
-        color: #697386;
-    }
-    #todo-panel {
-        height: auto;
-        max-height: 19;
-        margin-top: 1;
-        padding: 0;
-        background: #171d27;
-    }
-    #todo-log {
-        height: auto;
-        min-height: 3;
-        padding: 0 1;
-        border: none;
-        background: #10141b;
-    }
-    #todo-select {
-        height: 3;
-        margin: 0;
-    }
-    #todo-entry, #todo-actions {
-        height: 3;
-        margin: 0;
-    }
-    #todo-input {
-        width: 1fr;
-        border: tall #596173;
-        background: #171c25;
-    }
-    #todo-entry Button, #todo-actions Button {
-        min-width: 7;
-        width: auto;
-        margin-left: 1;
-    }
-    #main-stage {
-        width: 1fr;
-        height: 1fr;
-        background: #11151d;
-    }
-    #view-nav {
-        height: 3;
-        padding: 0 1;
-        background: #171c25;
-        border-bottom: solid #303847;
-    }
-    #view-nav Button {
-        width: auto;
-        min-width: 11;
-        height: 3;
-        border: none;
-        color: #8c96a8;
-        background: #171c25;
-    }
-    #view-nav Button.active-nav {
-        color: #ffcb6b;
-        text-style: bold;
-        background: #232a37;
-    }
-    #view-switcher, .surface {
-        height: 1fr;
-        background: #11151d;
-    }
-    #activity-view {
-        padding: 1;
-    }
-    #focus-summary {
-        height: 6;
-        min-height: 5;
-        padding: 0 1 1 1;
-        color: #c9d1dc;
-        background: #151a22;
-        border: round #3c4454;
-    }
-    #controls-view, #evidence-view, #history-view, #system-view {
-        height: 1fr;
-        padding: 1 2;
-        overflow-y: auto;
-    }
-    #controls-intro, #library-intro, #system-intro {
-        height: auto;
-        padding: 0 0 1 0;
-        color: #c9d1dc;
-    }
-    #live-controls {
-        height: 3;
-        margin: 0 0 1 0;
-    }
-    #live-controls Label {
-        width: auto;
-        padding: 1 1 0 0;
-        color: #82aaff;
-    }
-    #live-controls Select {
-        width: 1fr;
-        min-width: 16;
-        margin-right: 1;
-    }
-    .mission-form-row {
-        height: 3;
-        margin: 0 0 1 0;
-    }
-    .mission-form-label {
-        width: 16;
-        padding: 1 1 0 0;
-        color: #9aa4b5;
-    }
-    .mission-form-control {
-        width: 1fr;
-        border: tall #596173;
-        background: #171c25;
-    }
-    .mission-form-control:focus {
-        border: tall #ffb86c;
-    }
-    #control-actions, #library-actions, #learning-actions, #contest-actions {
-        height: 3;
-        margin: 0 0 1 0;
-    }
-    #control-actions Button, #library-actions Button, #learning-actions Button, #contest-actions Button {
-        width: auto;
-        margin-right: 1;
-    }
-    #learning-focus, #learning-sources, #contest-input {
-        width: 1fr;
-        border: tall #596173;
-        background: #171c25;
-    }
-    #mission-guide-panel, #learning-panel, #contest-panel,
-    #research-panel, #plan-panel, #changes-panel, #proof-panel,
-    #soul-panel, #abilities-panel, #forms-panel, #configure-panel {
-        height: auto;
-        margin-bottom: 1;
-        background: #151a22;
-    }
-    #mission-guide-log {
-        height: 11;
-        min-height: 7;
-    }
-    #learning-log {
-        height: 7;
-        min-height: 4;
-    }
-    #research-log, #plan-log, #diff-log, #tests-log {
-        height: 12;
-        min-height: 7;
-    }
-    #stats-log, #skills-log, #variants-log {
-        height: 12;
-        min-height: 7;
-    }
-    #settings-text {
-        height: auto;
-        min-height: 5;
-        padding: 1;
-    }
-    #mission-library {
-        width: 1fr;
-        height: 3;
-        margin-bottom: 1;
-    }
-    #mission-library-detail {
-        height: 8;
-        min-height: 5;
-        padding: 1;
-        border: round #3c4454;
-        color: #c9d1dc;
-    }
-    RichLog {
-        height: 1fr;
-        border: round #3c4454;
-        background: #10141b;
-    }
-    .empty-view {
-        color: #798192;
-        padding: 1;
-    }
-    #composer-row {
-        dock: bottom;
-        height: 3;
-        padding: 0 1;
-        background: #1b202b;
-        border-top: solid #303847;
-    }
-    #composer-prompt {
-        width: 3;
-        padding: 1 0 0 1;
-        color: #ffcb6b;
-        text-style: bold;
-    }
-    #goal-input {
-        width: 1fr;
-        border: tall #596173;
-        background: #151a22;
-    }
-    #goal-input:focus {
-        border: tall #ffb86c;
-    }
-    #composer-mode {
-        width: auto;
-        min-width: 12;
-        padding: 1 1 0 1;
-        color: #798192;
-    }
+    CSS = f"""
+    Screen {{ layout: vertical; background: #0e1117; }}
+    #status {{ height: 1; padding: 0 1; background: #161b22; color: #c9d1d9; }}
+    #feed {{ height: 1fr; padding: 0 1; scrollbar-size: 1 1; }}
+    #feed > Static {{ margin: 0 0 0 0; }}
+    .you {{ color: {_YOU}; }}
+    .xander {{ color: #e6edf3; }}
+    .dim {{ color: {_DIM}; }}
+    .ok {{ color: {_OK}; }}
+    .warn {{ color: {_WARN}; }}
+    .bad {{ color: {_BAD}; }}
+    .ask {{ color: {_ASK}; }}
+    .gap {{ height: 1; }}
+    #composer-row {{ height: 1; background: #161b22; }}
+    #prompt {{ width: 3; padding: 0 1; color: {_XANDER}; background: #161b22; text-style: bold; }}
+    #composer {{ border: none; background: #161b22; color: #e6edf3; padding: 0; height: 1; width: 1fr; }}
+    #composer:focus {{ border: none; }}
+    #hint {{ height: 1; padding: 0 1; color: {_DIM}; background: #0e1117; }}
     """
-    # Alt is the primary set: a focused Input swallows plain letters, but never
-    # an Alt chord, so every view and control stays reachable mid-sentence
-    # without leaving the composer. Ctrl equivalents are kept for muscle memory.
+
     BINDINGS = [
-        # views — by number and by initial
-        Binding("alt+1", "show_view('activity-view')", "Activity", show=False, priority=True),
-        Binding("alt+2", "show_view('controls-view')", "Controls", show=False, priority=True),
-        Binding("alt+3", "show_view('evidence-view')", "Evidence", show=False, priority=True),
-        Binding("alt+4", "show_view('history-view')", "History", show=False, priority=True),
-        Binding("alt+5", "show_view('system-view')", "Xander", show=False, priority=True),
-        Binding("alt+a", "show_view('activity-view')", "Activity", show=False, priority=True),
-        Binding("alt+c", "show_view('controls-view')", "Controls", show=False, priority=True),
-        Binding("alt+e", "show_view('evidence-view')", "Evidence", show=False, priority=True),
-        Binding("alt+h", "show_view('history-view')", "History", show=False, priority=True),
-        Binding("alt+x", "show_view('system-view')", "Xander", show=False, priority=True),
-        # panels and composer
-        Binding("alt+b", "toggle_loop", "Hide/show the loop rail", show=False, priority=True),
-        Binding("alt+o", "toggle_todos", "Pinned work", show=False, priority=True),
-        Binding("alt+k", "clear_activity", "Clear activity", show=False, priority=True),
-        Binding("alt+l", "focus_composer", "Back to the composer", show=False, priority=True),
-        # run control
-        Binding("alt+n", "new", "New", show=False, priority=True),
-        Binding("alt+p", "pause", "Pause", show=False, priority=True),
-        Binding("alt+r", "resume", "Resume", show=False, priority=True),
-        Binding("alt+s", "contest", "Stop and correct", show=False, priority=True),
-        Binding("alt+q", "quit", "Quit", show=False, priority=True),
-        Binding("alt+slash", "help", "Help", show=False, priority=True),
-        # kept so existing habits still work
-        Binding("ctrl+1", "show_view('activity-view')", "Activity", show=False, priority=True),
-        Binding("ctrl+2", "show_view('controls-view')", "Controls", show=False, priority=True),
-        Binding("ctrl+3", "show_view('evidence-view')", "Evidence", show=False, priority=True),
-        Binding("ctrl+4", "show_view('history-view')", "History", show=False, priority=True),
-        Binding("ctrl+5", "show_view('system-view')", "Xander", show=False, priority=True),
-        Binding("ctrl+b", "toggle_loop", "Toggle loop", show=False, priority=True),
-        Binding("ctrl+o", "toggle_todos", "Toggle TODOs", show=False, priority=True),
-        Binding("ctrl+l", "focus_composer", "Composer", show=False, priority=True),
-        Binding("ctrl+k", "clear_activity", "Clear activity", show=False, priority=True),
-        Binding("ctrl+n", "new", "New", show=False, priority=True),
-        Binding("ctrl+p", "pause", "Pause", show=False, priority=True),
-        Binding("ctrl+shift+p", "resume", "Resume", show=False, priority=True),
-        Binding("ctrl+shift+x", "contest", "Stop and contest", show=False, priority=True),
+        Binding("shift+tab", "cycle_mode", "Mode", show=False, priority=True),
+        Binding("escape", "focus_composer", "Composer", show=False, priority=True),
+        Binding("ctrl+k", "clear_feed", "Clear", show=False, priority=True),
         Binding("ctrl+q", "quit", "Quit", show=False, priority=True),
         Binding("f1", "help", "Help", show=False, priority=True),
     ]
 
-    phase_index = reactive(0)
     task_state = reactive("idle")
 
     def __init__(
@@ -428,1200 +180,331 @@ class XanderApp(App[None]):
         self.mode = mode
         self.model = model
         self.task_id = task_id
-        self._current_view = "activity-view"
-        self._current_guide: dict[str, Any] | None = None
-        self._known_guide_step_ids: set[str] = set()
-        self._live_value_note = "Ready for an outcome."
         self.goal = ""
+        self._draft = ""
         self._conversation: list[dict[str, str]] = []
         self._chat_busy = False
         self._chat_queue: list[str] = []
-        # The last line that opened a discussion or was held as unclear.
-        # ``/work`` with no argument runs it; ``/discuss`` talks it through.
-        self._draft = ""
-        self._active_run_mode = mode
-        self._focus_work = "Waiting for an outcome"
-        self._focus_thought = "Give Xander one outcome to understand and prove."
-        self._focus_decision = "No decision yet."
-        self._focus_change = "Nothing changed yet."
-        self._focus_next = "Start with create, do, or make to authorize work · /discuss to think first · /help for commands."
-        self._activity_counts: dict[str, int] = {}
-        self._mission_constraints: list[str] = []
-        self._mission_allowed_paths: list[str] = []
-        self._mission_acceptance_checks: list[str] = []
-        self._mission_timeout: int | None = None
-        self._mission_setup_policy = "ask"
-        self._selected_mission_id: str | None = None
-        self._delete_armed_id: str | None = None
-        self._workboard_store = WorkboardStore()
-        self._workboard = self._workboard_store.load(self.workspace)
-        self._selected_todo_id: str | None = None
-        self._todo_sequence_active = False
-        self._active_todo_id: str | None = None
-        self.narrator = Narrator(variant=variant, workspace=self.workspace)
         self._engine_busy = False
         self._order_queue: list[dict[str, str]] = []
         self._pending_choice: dict[str, Any] | None = None
         self._pending_approval: dict[str, Any] | None = None
         self._retry_task_id: str | None = None
+        self._steering_lock = Lock()
+        self._steering_notes: list[str] = []
+        self._abort_requested = False
+        self._last_result: dict[str, Any] | None = None
+        self._thinking: Static | None = None
+        self._todo_sequence_active = False
+        self._active_todo_id: str | None = None
+        self._entries = 0
+        self._workboard_store = WorkboardStore()
+        self._workboard = self._workboard_store.load(self.workspace)
+        self.narrator = Narrator(variant=variant, workspace=self.workspace)
         self._branch, self._dirty_count = _repository_status(self.workspace)
         self._power_status = PowerStatus(None)
         self._power_guard = PowerZeroGuard(reader=power_reader, shutdown=power_shutdown or self._shutdown_power)
 
-    def _variant_options(self) -> list[tuple[str, str]]:
-        try:
-            from .variants import list_variants
-
-            names = [profile.name for profile in list_variants()]
-        except Exception:
-            names = []
-        if self.variant not in names:
-            names.insert(0, self.variant)
-        return [(name, name) for name in dict.fromkeys(names)]
-
+    # -- layout ----------------------------------------------------------------
     def compose(self) -> ComposeResult:
-        yield Static(self._context_text(), id="status-bar")
-        yield Static(self._mission_banner_text(), id="mission-banner")
-        with Horizontal(id="workspace-body"):
-            with VerticalScroll(id="loop-rail"):
-                yield Static(self._loop_heading_text(), id="loop-heading")
-                yield Static("\n".join(self._loop_lines()), id="loop-log")
-                with Collapsible(
-                    title=self._todo_panel_title(),
-                    collapsed=True,
-                    collapsed_symbol="▸",
-                    expanded_symbol="▾",
-                    id="todo-panel",
-                ):
-                    yield Static("[dim]No pinned work yet.[/]", id="todo-log")
-                    yield Select([], prompt="Choose pinned work", id="todo-select")
-                    with Horizontal(id="todo-entry"):
-                        yield Input(placeholder="Pin another outcome", id="todo-input")
-                        yield Button("Add", id="add-todo")
-                    with Horizontal(id="todo-actions"):
-                        yield Button("Run", variant="primary", id="run-todo-sequence")
-                        yield Button("Done", id="complete-todo")
-                yield Static("⌥B hides this rail · ⌥O pinned work · ⌥/ all keys", id="loop-help")
-            with Vertical(id="main-stage"):
-                with Horizontal(id="view-nav"):
-                    yield Button("⌥A Activity", id="nav-activity", classes="active-nav")
-                    yield Button("⌥C Controls", id="nav-controls")
-                    yield Button("⌥E Evidence", id="nav-evidence")
-                    yield Button("⌥H History", id="nav-history")
-                    yield Button("⌥X Xander", id="nav-system")
-                with ContentSwitcher(initial="activity-view", id="view-switcher"):
-                    with Vertical(id="activity-view", classes="surface"):
-                        yield Static(self._focus_summary_text(), id="focus-summary")
-                        yield RichLog(id="run-log", wrap=True, highlight=False, markup=True)
-                    with VerticalScroll(id="controls-view", classes="surface"):
-                        yield Static(
-                            "[bold #ffcb6b]LIVE CONTROLS[/]  Type work in the composer. Values changed here remain "
-                            "editable while Xander runs and apply on the next engine dispatch.",
-                            id="controls-intro",
-                        )
-                        with Horizontal(id="live-controls"):
-                            yield Label("Mode")
-                            yield Select(
-                                [
-                                    ("Build automatically", "implement"),
-                                    ("Inspect only", "inspect"),
-                                    ("Research only", "research"),
-                                    ("Plan only", "plan"),
-                                    ("Triage tests", "test-triage"),
-                                    ("Talk / ask", "answer"),
-                                ],
-                                value=self.mode,
-                                allow_blank=False,
-                                id="mission-mode",
-                            )
-                            yield Label("Autonomy")
-                            yield Select(
-                                [(name, name) for name in ("full-auto", "supervised", "proposal-only")],
-                                value=self.autonomy or "full-auto",
-                                allow_blank=False,
-                                id="mission-autonomy",
-                            )
-                            yield Label("Setup")
-                            yield Select(
-                                [(name, name) for name in ("ask", "allow", "never")],
-                                value="ask",
-                                allow_blank=False,
-                                id="mission-setup",
-                            )
-                        with Horizontal(classes="mission-form-row"):
-                            yield Label("Variant", classes="mission-form-label")
-                            yield Select(
-                                self._variant_options(),
-                                value=self.variant,
-                                allow_blank=False,
-                                id="mission-variant",
-                                classes="mission-form-control",
-                            )
-                            yield Label("Time (min)", classes="mission-form-label")
-                            yield Input(placeholder="automatic", id="mission-time", classes="mission-form-control")
-                        with Horizontal(classes="mission-form-row"):
-                            yield Label("Proof", classes="mission-form-label")
-                            yield Input(
-                                placeholder="Optional command, e.g. pytest -q",
-                                id="mission-proof",
-                                classes="mission-form-control",
-                            )
-                        with Horizontal(classes="mission-form-row"):
-                            yield Label("Allowed paths", classes="mission-form-label")
-                            yield Input(
-                                placeholder="Optional, comma-separated",
-                                id="mission-allowed",
-                                classes="mission-form-control",
-                            )
-                        with Horizontal(classes="mission-form-row"):
-                            yield Label("Constraints", classes="mission-form-label")
-                            yield Input(
-                                placeholder="Optional, comma-separated",
-                                id="mission-constraints",
-                                classes="mission-form-control",
-                            )
-                        with Horizontal(id="control-actions"):
-                            yield Button("Apply values", variant="primary", id="apply-controls")
-                            yield Button("Reset values", id="reset-controls")
-                            yield Button("Open History", id="open-library")
-                        with Collapsible(title="Full work loop", collapsed=False, id="mission-guide-panel"):
-                            yield RichLog(id="mission-guide-log", wrap=True, highlight=False, markup=True)
-                        with Collapsible(title="Learning brief", collapsed=True, id="learning-panel"):
-                            yield Input(placeholder="What should Xander learn or compare?", id="learning-focus")
-                            yield Input(placeholder="Useful URLs, docs, repos, or commands", id="learning-sources")
-                            with Horizontal(id="learning-actions"):
-                                yield Button("Apply learning brief", id="save-learning")
-                            yield RichLog(id="learning-log", wrap=True, highlight=False, markup=True)
-                        with Collapsible(title="Contest or correct the approach", collapsed=True, id="contest-panel"):
-                            yield Input(placeholder="What should change about the approach?", id="contest-input")
-                            with Horizontal(id="contest-actions"):
-                                yield Button("Stop active work", variant="error", id="contest-stop")
-                                yield Button("Record direction", id="record-contest")
-                    with VerticalScroll(id="evidence-view", classes="surface"):
-                        with Collapsible(title="Research and local context", collapsed=True, id="research-panel"):
-                            yield RichLog(id="research-log", wrap=True, highlight=False, markup=True)
-                        with Collapsible(title="Plan and decisions", collapsed=False, id="plan-panel"):
-                            yield RichLog(id="plan-log", wrap=True, highlight=False, markup=True)
-                        with Collapsible(title="Changes", collapsed=False, id="changes-panel"):
-                            yield RichLog(id="diff-log", wrap=False, highlight=True, markup=True)
-                        with Collapsible(title="Proof", collapsed=False, id="proof-panel"):
-                            yield RichLog(id="tests-log", wrap=True, highlight=False, markup=True)
-                    with VerticalScroll(id="history-view", classes="surface"):
-                        yield Static(
-                            "[bold #82aaff]HISTORY[/]  Recoverable runs, results, and evolving work loops for this workspace.",
-                            id="library-intro",
-                        )
-                        yield Select([], prompt="Choose a previous run", id="mission-library")
-                        with Horizontal(id="library-actions"):
-                            yield Button("Continue", variant="primary", id="continue-mission")
-                            yield Button("Delete", variant="error", id="delete-mission")
-                            yield Button("Refresh", id="refresh-library")
-                        yield Static("Select a run to see its loop and result.", id="mission-library-detail")
-                        yield RichLog(id="tasks-log", wrap=True, highlight=False, markup=True)
-                    with VerticalScroll(id="system-view", classes="surface"):
-                        yield Static(
-                            "[bold #c3e88d]XANDER[/]  Behavior, available gear, forms, and the values used for future work.",
-                            id="system-intro",
-                        )
-                        with Collapsible(title="Soul and outcomes", collapsed=False, id="soul-panel"):
-                            yield RichLog(id="stats-log", wrap=True, highlight=False, markup=True)
-                        with Collapsible(title="Available abilities", collapsed=True, id="abilities-panel"):
-                            yield RichLog(id="skills-log", wrap=True, highlight=False, markup=True)
-                        with Collapsible(title="Forms and variants", collapsed=True, id="forms-panel"):
-                            yield RichLog(id="variants-log", wrap=True, highlight=False, markup=True)
-                        with Collapsible(title="Current configuration", collapsed=True, id="configure-panel"):
-                            yield Static(self._settings_text(), id="settings-text", classes="empty-view")
+        yield Static("", id="status")
+        yield VerticalScroll(id="feed")
         with Horizontal(id="composer-row"):
-            yield Static("❯", id="composer-prompt")
-            yield Input(
-                placeholder=f"Tell {self.variant} what you need · questions become conversation · Enter runs",
-                id="goal-input",
-            )
-            yield Static(self._composer_mode_text(), id="composer-mode")
+            yield Static("›", id="prompt")
+            yield Composer(placeholder="tell Xander what you want · /help", id="composer")
+        yield Static("", id="hint")
 
     def on_mount(self) -> None:
-        self.query_one("#goal-input", Input).focus()
-        self.query_one("#status-bar", Static).tooltip = f"Workspace: {self.workspace}"
-        run_log = self.query_one("#run-log", RichLog)
-        run_log.write("[bold #ffcb6b]Ready.[/] Tell me the result you want in the field below.")
-        run_log.write("[dim]I will update the loop as the plan changes and surface only decisions, changes, proof, or blockers.[/]")
-        self._render_guide(None)
-        self._refresh_workboard(load_inputs=True)
-        self._refresh_tasks()
-        self._refresh_variants()
-        self._refresh_stats()
-        self._load_skills_panel()
+        self._refresh_status()
+        self.say(
+            f"[bold]Xander[/] in [bold]{escape(str(self.workspace))}[/]  "
+            f"[dim]· plain orders run · questions get answers · /help for commands[/]",
+            "dim",
+        )
         self._poll_power()
-        self.set_interval(5, self._poll_power)
+        self.set_interval(30, self._poll_power)
+        self.query_one("#composer", Composer).focus()
 
-    # -- context strips -------------------------------------------------------
-    def _context_text(self) -> str:
-        folder = self.workspace.name or str(self.workspace)
-        repository = "not a repo" if self._branch == "not-git" else self._branch
-        if self._dirty_count:
-            repository += f" +{self._dirty_count}"
-        queue = f" · queued {len(self._order_queue)}" if self._order_queue else ""
-        conversation = " · talking" if self._chat_busy else ""
-        return (
-            f"[bold #ffcb6b]XANDER[/]  {escape(self.variant)}  ·  {escape(folder)}  ·  {escape(repository)}  ·  "
-            f"[bold]{escape(self.task_state)}[/]  ·  {escape(self._phase_name())}  ·  "
-            f"power {escape(self._power_status.label)}{queue}{conversation}"
+    # -- feed ------------------------------------------------------------------
+    def say(self, markup: str, style: str = "xander") -> Static:
+        """Append one selectable entry to the feed and keep it scrolled to the end."""
+
+        feed = self.query_one("#feed", VerticalScroll)
+        entry = Static(markup, classes=style, markup=True)
+        feed.mount(entry)
+        self._entries += 1
+        feed.scroll_end(animate=False)
+        return entry
+
+    def say_you(self, text: str) -> None:
+        self.say(f"[bold {_YOU}]you ›[/] {escape(text)}", "you")
+
+    def say_xander(self, text: str) -> None:
+        self.say(f"[bold {_XANDER}]Xander ›[/] {escape(text)}", "xander")
+
+    def _refresh_status(self) -> None:
+        wheel = _wheel_for(self.mode, self.autonomy)
+        repo = f" · {self._branch}" + (f" ~{self._dirty_count}" if self._dirty_count else "") if self._branch else ""
+        power = f" · {self._power_status.label}" if self._power_status.capacity is not None else ""
+        state = {
+            "idle": "ready",
+            "running": "working…",
+            "approval": "needs your yes/no",
+            "question": "needs your choice",
+            "complete": "done",
+            "needs-attention": "stuck",
+            "paused": "paused",
+            "power-zero": "power off",
+        }.get(self.task_state, self.task_state)
+        self.query_one("#status", Static).update(
+            f"[bold {_XANDER}]XANDER[/] [dim]{escape(self.variant)}[/] · {escape(_short(str(self.workspace), 70))}"
+            f"{escape(repo)} · [bold]{wheel}[/] · {escape(state)}{escape(power)}"
         )
-
-    def _phase_name(self) -> str:
-        return MANTRA_PHASES[max(0, min(self.phase_index, len(MANTRA_PHASES) - 1))]
-
-    def _mission_banner_text(self) -> str:
-        if not self.goal:
-            return (
-                "[bold #ffcb6b]Ready[/]\n"
-                "[dim]Describe the result below. Use /controls when you want exact values.[/]"
-            )
-        guide = self._current_guide or {}
-        current = str(guide.get("current") or self._focus_thought or self._live_value_note)
-        progress = str(guide.get("progress") or "building the loop")
-        return (
-            f"[bold #ffcb6b]{escape(_short(self.goal, 120))}[/]\n"
-            f"[dim]{escape(self._phase_name())} · {escape(progress)}[/]  {escape(_short(current, 130))}"
+        self.query_one("#hint", Static).update(
+            f"{wheel} — {MODE_HELP[wheel]}   ·   shift+tab mode · ↑↓ history · ctrl+c copies selection · ctrl+q quit"
         )
-
-    def _composer_mode_text(self) -> str:
-        authority = self.autonomy or "profile"
-        return f"{self.variant} · {self.mode} · {authority}"
-
-    def _focus_summary_text(self) -> str:
-        return (
-            f"[bold #82aaff]NOW[/] {escape(_short(self._focus_work, 120))}\n"
-            f"[bold #c792ea]DECISION[/] {escape(_short(self._focus_decision, 120))}\n"
-            f"[bold #f78c6c]THINKING[/] {escape(_short(self._focus_thought, 120))}\n"
-            f"[bold #ffcb6b]CHANGED[/] {escape(_short(self._focus_change, 105))}  "
-            f"[bold #c3e88d]NEXT[/] {escape(_short(self._focus_next, 105))}"
-        )
-
-    def _loop_heading_text(self) -> str:
-        progress = str((self._current_guide or {}).get("progress") or "waiting")
-        return f"[bold #89ddff]ADAPTIVE LOOP[/]\n[dim]{escape(self._phase_name())} · {escape(progress)}[/]"
-
-    def _todo_panel_title(self) -> str:
-        pending = sum(todo.state != "done" for todo in self._workboard.todos)
-        active = sum(todo.state == "active" for todo in self._workboard.todos)
-        suffix = f" · {active} active" if active else ""
-        return f"Pinned work · {pending} pending{suffix}"
-
-    def _loop_lines(self) -> list[str]:
-        guide = self._current_guide or {}
-        steps = [step for step in guide.get("todo") or [] if isinstance(step, dict)]
-        if not steps:
-            return [
-                "[dim]Xander will write the first loop before analysis and grow it from the actual plan.[/]",
-            ]
-        lines: list[str] = []
-        for index, step in enumerate(steps, start=1):
-            state = str(step.get("state") or "todo")
-            glyph = {"done": "✓", "active": "◆", "blocked": "!"}.get(state, "○")
-            style = {
-                "done": "green",
-                "active": "bold #ffcb6b",
-                "blocked": "bold #ff5370",
-            }.get(state, "#7e899b")
-            text = escape(_short(str(step.get("text") or "Untitled step"), 90))
-            lines.append(f"[{style}]{glyph} {index}[/]  {text}")
-            evidence = " ".join(str(step.get("evidence") or "").split())
-            if evidence and state in {"done", "blocked"}:
-                lines.append(f"   [dim]{escape(_short(evidence, 82))}[/]")
-        questions = [str(item) for item in guide.get("questions") or [] if str(item).strip()]
-        if questions:
-            lines.append(f"\n[bold yellow]?[/] {escape(_short(questions[0], 96))}")
-        return lines
-
-    def _refresh_loop(self) -> None:
-        headings = self.query("#loop-heading")
-        if len(headings):
-            headings.first(Static).update(self._loop_heading_text())
-        logs = self.query("#loop-log")
-        if len(logs):
-            logs.first(Static).update("\n".join(self._loop_lines()))
-
-    def _refresh_focus(self) -> None:
-        banners = self.query("#mission-banner")
-        if len(banners):
-            banners.first(Static).update(self._mission_banner_text())
-        statuses = self.query("#status-bar")
-        if len(statuses):
-            statuses.first(Static).update(self._context_text())
-        modes = self.query("#composer-mode")
-        if len(modes):
-            modes.first(Static).update(self._composer_mode_text())
-        summaries = self.query("#focus-summary")
-        if len(summaries):
-            summaries.first(Static).update(self._focus_summary_text())
-        composers = self.query("#goal-input")
-        if len(composers):
-            composers.first(Input).placeholder = (
-                f"Tell {self.variant} what you need · questions become conversation · Enter runs"
-            )
-        self._refresh_loop()
-
-    def _update_focus(self, payload: dict[str, Any]) -> None:
-        event_type = str(payload.get("type") or payload.get("event") or "")
-        message = " ".join(str(payload.get("message", "")).split())
-        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        phase = str(payload.get("phase") or data.get("phase") or "")
-        result = data.get("result") if isinstance(data.get("result"), dict) else {}
-        task = data.get("task") if isinstance(data.get("task"), dict) else {}
-        if event_type == "phase":
-            label = phase.replace("_", " ").title()
-            self._focus_thought = f"{label}: {message}" if message else label
-            self._focus_next = "Gather the next piece of evidence before moving on."
-        elif event_type == "research":
-            sources = len(data.get("sources") or [])
-            tools = len(data.get("tools") or [])
-            self._focus_thought = message or "Looking for local context and relevant tools."
-            if sources or tools:
-                self._focus_thought = f"{self._focus_thought} ({sources} sources, {tools} tools)"
-            self._focus_next = "Turn the useful context into a small plan."
-        elif event_type == "delegation":
-            agent = str(data.get("agent") or "another worker")
-            operation = str(data.get("operation") or message or "support work")
-            status = str(data.get("status") or "working")
-            self._focus_thought = f"{status.title()}: {agent} · {operation}"
-            self._focus_next = "Follow the returned evidence before accepting the next step."
-        elif event_type == "plan":
-            actions = data.get("actions", 0)
-            checks = data.get("checks", 0)
-            decision = str(data.get("decision") or message or "Plan shaped from the available evidence.")
-            self._focus_decision = decision
-            self._focus_thought = message or f"Shaping {actions} bounded action(s)."
-            self._focus_thought = f"{self._focus_thought} ({actions} actions, {checks} checks)"
-            self._focus_next = "Review the plan, then make the smallest safe change."
-        elif event_type == "logic_change":
-            self._focus_decision = str(data.get("replacement_summary") or message or "Change course from new evidence.")
-            self._focus_thought = "The approach changed after evidence; review or contest it before the next step."
-            self._focus_next = "Use Ctrl+Shift+X to stop and contest, or let the changed approach continue."
-        elif event_type in {"action", "patch"}:
-            action = data.get("action") if isinstance(data.get("action"), dict) else {}
-            expected = str(action.get("expected") or "").strip()
-            if expected:
-                self._focus_work = expected
-            elif message and event_type == "patch":
-                self._focus_work = message
-            changed = result.get("changed_paths") or []
-            if changed:
-                self._focus_change = ", ".join(str(path) for path in changed[:4])
-                if len(changed) > 4:
-                    self._focus_change += f" (+{len(changed) - 4} more)"
-            self._focus_thought = "Applying one bounded step and checking its result."
-            if result.get("status") not in {None, "ok"}:
-                self._focus_thought = f"The step reported {result.get('status')}; checking the evidence."
-            self._focus_next = "Check the result before choosing another step."
-        elif event_type == "test":
-            self._focus_work = str(data.get("name") or message or "acceptance checks")
-            status = str(result.get("status") or message or "in progress")
-            self._focus_thought = f"Proof: {status}"
-            self._focus_next = "Judge the evidence, not the intention."
-        elif event_type == "voice":
-            if message:
-                self._focus_thought = message
-        elif event_type == "error":
-            self._focus_thought = f"Blocked: {message}"
-            self._focus_next = "Stop repeating this path; choose a changed approach."
-        elif event_type == "result":
-            mission_task = task or (data.get("handoff") if isinstance(data.get("handoff"), dict) else {})
-            status = str(payload.get("status") or data.get("status") or mission_task.get("status") or "recorded")
-            self._focus_work = self.goal or self._focus_work
-            self._focus_thought = f"Work {status}; the result is recorded."
-            self._focus_next = "Open History for the concise record and result."
-        self._refresh_focus()
-
-    @staticmethod
-    def _activity_signature_for(payload: dict[str, Any], line: str) -> str:
-        signature = re.sub(r"\+\s*[\d.]+s", "", line)
-        signature = re.sub(r"\ba\d+\b", "a#", signature)
-        signature = re.sub(r"\battempt\s+\d+\b", "attempt #", signature, flags=re.IGNORECASE)
-        return signature
-
-    def _human_event_line(self, payload: dict[str, Any], narrated: str) -> str | None:
-        event_type = str(payload.get("type") or payload.get("event") or "").casefold()
-        message = " ".join(str(payload.get("message") or "").split())
-        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        result = data.get("result") if isinstance(data.get("result"), dict) else {}
-        action = data.get("action") if isinstance(data.get("action"), dict) else {}
-        phase = str(payload.get("phase") or data.get("phase") or "").replace("_", " ").title()
-
-        if event_type == "phase":
-            detail = f" — {escape(_short(message, 130))}" if message else ""
-            return f"[bold #c792ea]{escape(phase or 'Next phase')}[/]{detail}"
-        if event_type == "guide":
-            guide = data.get("guide") if isinstance(data.get("guide"), dict) else {}
-            progress = str(guide.get("progress") or "loop created")
-            current = str(guide.get("current") or message)
-            # The rail on the left already renders the live loop; repeating it
-            # in the feed is the same fact twice. Only a question earns a line.
-            questions = [str(item) for item in (guide.get("questions") or []) if str(item).strip()]
-            if questions:
-                return f"[bold yellow]He needs an answer[/] — {escape(_short(questions[0], 130))}"
-            return None
-        if event_type == "research":
-            sources = len(data.get("sources") or [])
-            tools = len(data.get("tools") or [])
-            counts = []
-            if sources:
-                counts.append(f"{sources} source{'s' if sources != 1 else ''}")
-            if tools:
-                counts.append(f"{tools} tool{'s' if tools != 1 else ''}")
-            suffix = f" · {', '.join(counts)}" if counts else ""
-            return f"[bold #82aaff]Research[/] — {escape(_short(message or 'context collected', 130))}{suffix}"
-        if event_type == "delegation":
-            # "Master started — plan review" / "Master completed — plan review"
-            # is pure ceremony: it costs two lines to say nothing happened.
-            # Only a verdict or a failure is worth the operator's eye.
-            status = str(data.get("status") or "").casefold()
-            outcome = str(data.get("outcome") or "").casefold()
-            error = str(data.get("error") or "")
-            agent = str(data.get("agent") or "Support agent")
-            if error or status in {"failed", "blocked"} or outcome in {"failed", "blocked"}:
-                detail = error or str(data.get("operation") or message or "support work")
-                return f"[bold #ff5370]{escape(agent)} could not help[/] — {escape(_short(detail, 120))}"
-            if status == "selected" and data.get("role"):
-                role = str(data["role"])
-                reason = str(data.get("reason") or data.get("operation") or message)
-                return f"[bold #89ddff]Model route[/] — {escape(role)} · {escape(_short(reason, 120))}"
-            return None
-        if event_type == "plan":
-            actions = data.get("actions")
-            checks = data.get("checks")
-            if isinstance(actions, list):
-                actions = len(actions)
-            if isinstance(checks, list):
-                checks = len(checks)
-            size = []
-            if isinstance(actions, int):
-                size.append(f"{actions} step{'s' if actions != 1 else ''}")
-            if isinstance(checks, int):
-                size.append(f"{checks} check{'s' if checks != 1 else ''}")
-            suffix = f" · {', '.join(size)}" if size else ""
-            decision = str(data.get("decision") or message or "ready")
-            why = str(data.get("why") or "")
-            reason = f" · why: {escape(_short(why, 105))}" if why else ""
-            return f"[bold #c3e88d]Decision[/] — {escape(_short(decision, 130))}{reason}{suffix}"
-        if event_type == "logic_change":
-            reason = str(data.get("reason") or message or "new evidence")
-            replacement = str(data.get("replacement_summary") or data.get("replacement") or "")
-            suffix = f" → {escape(_short(replacement, 90))}" if replacement else ""
-            return f"[bold #f78c6c]Approach changed[/] — {escape(_short(reason, 120))}{suffix}"
-        if event_type in {"action", "patch"}:
-            expected = str(action.get("expected") or message or "bounded step")
-            changed = [str(path) for path in result.get("changed_paths") or []]
-            status = str(result.get("status") or "")
-            wrote = data.get("wrote") if isinstance(data.get("wrote"), list) else []
-            if wrote:
-                # Say what the file now IS. "Changed — main.cpp" hid the fact
-                # that main.cpp was a nine-line stub.
-                described = []
-                for item in wrote[:4]:
-                    name = escape(str(item.get("path", "?")))
-                    if "lines" not in item:
-                        described.append(name)
-                    elif item.get("placeholder"):
-                        described.append(f"{name} [bold #ff5370]({item['lines']} lines — still a placeholder)[/]")
-                    else:
-                        described.append(f"{name} [dim]({item['lines']} lines)[/]")
-                more = f" (+{len(wrote) - 4})" if len(wrote) > 4 else ""
-                return f"[bold #ffcb6b]Wrote[/] — " + ", ".join(described) + more
-            if changed:
-                paths = ", ".join(changed[:4])
-                if len(changed) > 4:
-                    paths += f" (+{len(changed) - 4})"
-                return f"[bold #ffcb6b]Changed[/] — {escape(paths)}"
-            if status and status != "ok":
-                reason = str(result.get("reason") or expected)
-                return f"[bold #ff5370]Step {escape(status)}[/] — {escape(_short(reason, 130))}"
-            if result and status == "ok":
-                return f"[bold #c3e88d]Step done[/] — {escape(_short(expected, 135))}"
-            verb = "Changed" if event_type == "patch" else "Doing"
-            return f"[bold #ffcb6b]{verb}[/] — {escape(_short(expected, 135))}"
-        if event_type == "test":
-            # A check emits twice: once on start with no result, once with one.
-            # The start line has nothing to say and was rendering as
-            # "Proof <name> — <name>", so it is dropped entirely.
-            if not result:
-                return None
-            name = str(data.get("name") or message or "acceptance check")
-            status = str(result.get("status") or "")
-            code = result.get("returncode")
-            evidence = " ".join(str(result.get("reason") or "").split())
-            if not evidence and status != "ok":
-                tail = (result.get("stderr") or result.get("stdout") or "").strip().splitlines()
-                evidence = tail[-1] if tail else ""
-            if status == "ok":
-                return f"[bold #c3e88d]Proof passed[/] — {escape(_short(name, 110))}"
-            marker = f" (exit {code})" if isinstance(code, int) and code else ""
-            detail = f" · {escape(_short(evidence, 90))}" if evidence else ""
-            return f"[bold #ff5370]Proof failed[/]{marker} — {escape(_short(name, 100))}{detail}"
-        if event_type == "approval":
-            return f"[bold yellow]Your decision is needed[/] — {escape(_short(message, 135))}"
-        if event_type == "error":
-            return f"[bold #ff5370]Blocked[/] — {escape(_short(message or 'the current approach failed', 150))}"
-        if event_type == "result":
-            status = str(payload.get("status") or data.get("status") or "recorded")
-            label = "Done" if status in {"complete", "completed"} else status.replace("_", " ").title()
-            return f"[bold green]{escape(label)}[/] — {escape(_short(message or 'result recorded', 145))}"
-        if event_type == "voice" and message:
-            return f"[italic #b8c0cc]{escape(_short(message, 150))}[/]"
-        if message:
-            return f"[dim]{escape(_short(message, 150))}[/]"
-        return narrated or None
-
-    def _write_activity(self, payload: dict[str, Any], line: str) -> None:
-        signature = self._activity_signature_for(payload, line)
-        run_log = self.query_one("#run-log", RichLog)
-        if signature in self._activity_counts:
-            self._activity_counts[signature] += 1
-            return
-        run_log.write(line)
-        self._activity_counts[signature] = 1
-
-    def _flush_activity(self) -> None:
-        repeated = sum(count - 1 for count in self._activity_counts.values() if count > 1)
-        patterns = sum(1 for count in self._activity_counts.values() if count > 1)
-        if repeated:
-            self.query_one("#run-log", RichLog).write(
-                f"[dim]folded {repeated} repeated entr{'y' if repeated == 1 else 'ies'} "
-                f"across {patterns} unchanged pattern{'s' if patterns != 1 else ''}[/]"
-            )
-
-    def _refresh_workboard(self, *, load_inputs: bool = False) -> None:
-        panels = self.query("#todo-panel")
-        if len(panels):
-            panels.first(Collapsible).title = self._todo_panel_title()
-        todo_matches = self.query("#todo-log")
-        if len(todo_matches):
-            lines = []
-            open_goals = self._workboard_store.open_goals(self._workboard)
-            if open_goals:
-                lines.append("[bold #89ddff]Goals[/] [dim](/goal · /work runs the newest)[/]")
-                lines.extend(f"[#89ddff]◎[/] {escape(goal.text)}" for goal in open_goals[-6:])
-            for todo in self._workboard.todos:
-                glyph = {"done": "✓", "active": "▸", "blocked": "!"}.get(todo.state, "·")
-                style = {"done": "green", "active": "bold #ffcb6b", "blocked": "bold #ff5370"}.get(todo.state, "dim")
-                detail = f" · {todo.evidence}" if todo.evidence else ""
-                lines.append(f"[{style}]{glyph}[/] {escape(todo.text)} [dim]({todo.state}){escape(detail)}[/]")
-            todo_matches.first(Static).update("\n".join(lines or ["[dim]No pinned work yet.[/]"]))
-        select_matches = self.query("#todo-select")
-        if len(select_matches):
-            select = select_matches.first(Select)
-            previous = select.value
-            options = [(f"{todo.state.upper()} · {_short(todo.text, 72)}", todo.id) for todo in self._workboard.todos]
-            select.set_options(options)
-            ids = {value for _, value in options}
-            if isinstance(previous, str) and previous in ids:
-                select.value = previous
-            elif self._selected_todo_id in ids:
-                select.value = self._selected_todo_id
-            elif options:
-                select.value = options[0][1]
-            else:
-                select.clear()
-            self._selected_todo_id = select.value if isinstance(select.value, str) else None
-        learning_matches = self.query("#learning-log")
-        if len(learning_matches):
-            lines = ["[dim]Verified lessons are added automatically after a task produces evidence.[/]"]
-            for lesson in self._workboard.observed_lessons[-6:]:
-                lines.append(f"[bold #c3e88d]✓[/] {escape(_short(lesson, 135))}")
-            if self._workboard.learning_sources:
-                lines.append("[bold #82aaff]sources:[/] " + escape(" · ".join(self._workboard.learning_sources)))
-            if self._workboard.contest_comments:
-                lines.append("[bold #ff5370]contests:[/] " + escape(_short(self._workboard.contest_comments[-1], 135)))
-            learning_matches.first(RichLog).clear()
-            for line in lines:
-                learning_matches.first(RichLog).write(line)
-        if load_inputs:
-            for selector, value in (
-                ("#learning-focus", self._workboard.learning_focus),
-                ("#learning-sources", ", ".join(self._workboard.learning_sources)),
-            ):
-                input_matches = self.query(selector)
-                if len(input_matches):
-                    input_matches.first(Input).value = value
-
-    def _learning_constraints(self) -> list[str]:
-        constraints = [
-            "Treat command exit codes, changed files, artifacts, and runtime behavior as ground truth; do not infer success from intent.",
-            "When a check fails, test a materially different angle before repeating the same approach.",
-        ]
-        if self._workboard.learning_focus:
-            constraints.append(f"Learning target: {self._workboard.learning_focus}")
-        if self._workboard.learning_sources:
-            constraints.append("Learning sources or destinations: " + ", ".join(self._workboard.learning_sources))
-        constraints.extend(f"Operator contest/comment to respect: {item}" for item in self._workboard.contest_comments[-3:])
-        return constraints
-
-    def _settings_text(self) -> str:
-        try:
-            from .variants import load_variant
-
-            profile = load_variant(self.variant)
-            autonomy = self.autonomy or profile.autonomy
-            routing = "  ".join(f"{role}:{model.rsplit('/', 1)[-1]}" for role, model in profile.model_routing.items())
-        except Exception as exc:
-            autonomy, routing = "full-auto", f"unavailable ({exc})"
-        return escape(
-            f"workspace={self.workspace}\n"
-            f"caller={self.caller}  mode={self.mode}  model={self.model}  autonomy={autonomy}\n"
-            f"setup={self._mission_setup_policy}  state={self.task_state}\n"
-            f"abilities: {abilities_line()}\n"
-            f"routing: {routing}"
-        )
-
-    def watch_phase_index(self, _: int) -> None:
-        self._refresh_focus()
 
     def watch_task_state(self, _: str) -> None:
-        self._refresh_focus()
+        if self.is_mounted:
+            self._refresh_status()
 
-    # -- side panels ----------------------------------------------------------
-    def _fill_log(self, selector: str, lines: list[str]) -> None:
-        log = self.query_one(selector, RichLog)
-        log.clear()
-        for line in lines:
-            log.write(line)
-
-    def _render_guide(self, guide: dict[str, Any] | None) -> None:
-        previous_ids = set(self._known_guide_step_ids)
-        self._current_guide = guide
-        self._known_guide_step_ids = {
-            str(step.get("id"))
-            for step in (guide or {}).get("todo") or []
-            if isinstance(step, dict) and step.get("id")
-        }
-        added = self._known_guide_step_ids - previous_ids
-        if previous_ids and added:
-            run_logs = self.query("#run-log")
-            if len(run_logs):
-                run_logs.first(RichLog).write(
-                    f"[bold #89ddff]Loop updated[/] — Xander added {len(added)} new "
-                    f"step{'s' if len(added) != 1 else ''} from the plan."
-                )
-        self._refresh_focus()
-        matches = self.query("#mission-guide-log")
-        if not len(matches):
-            return
-        log = matches.first(RichLog)
-        log.clear()
-        if not guide:
-            log.write("[dim]The guide will be written before analysis and revised from real evidence.[/]")
-            return
-        statement = escape(str(guide.get("statement") or ""))
-        progress = escape(str(guide.get("progress") or ""))
-        current = escape(str(guide.get("current") or ""))
-        log.write(f"[bold #ffcb6b]Outcome[/]  {statement}")
-        log.write(f"[bold #82aaff]Progress[/] {progress}")
-        log.write(f"[bold #c3e88d]Current[/]  {current}")
-        for step in guide.get("todo") or []:
-            if not isinstance(step, dict):
-                continue
-            state = str(step.get("state") or "todo")
-            glyph = {"done": "✓", "active": "▸", "blocked": "!"}.get(state, "·")
-            style = {"done": "green", "active": "bold #ffcb6b", "blocked": "bold red"}.get(state, "dim")
-            log.write(f"  [{style}]{glyph}[/] {escape(str(step.get('text') or ''))}")
-        for question in guide.get("questions") or []:
-            log.write(f"[bold yellow]Question[/] {escape(str(question))}")
-        if guide.get("last_change"):
-            log.write(f"[bold #c792ea]Changed[/] {escape(str(guide['last_change']))}")
-        if guide.get("result"):
-            log.write(f"[bold green]Result[/] {escape(str(guide['result']))}")
-
-    def _update_library_detail(self, mission_id: str | None = None) -> None:
-        matches = self.query("#mission-library-detail")
-        if not len(matches):
-            return
-        if not mission_id:
-            matches.first(Static).update("Select a run to see its loop and result.")
-            return
-        try:
-            mission = MissionStore().load(self.workspace, mission_id)
-        except Exception as exc:
-            matches.first(Static).update(f"[red]Run unavailable: {escape(str(exc))}[/]")
-            return
-        lines = [
-            f"[bold #ffcb6b]{escape(mission.goal)}[/]",
-            f"{escape(mission.status)} · {escape(mission.phase)} · {escape(mission.result)}",
-        ]
-        if mission.task.guide:
-            lines.append(f"guide: {escape(mission.task.guide.progress)} · {escape(mission.task.guide.current)}")
-            steps = [
-                f"{'✓' if step.state == 'done' else '▸' if step.state == 'active' else '!' if step.state == 'blocked' else '·'} {step.text}"
-                for step in mission.task.guide.todo[:3]
-            ]
-            if steps:
-                lines.append("todo: " + " · ".join(escape(step) for step in steps))
-            if mission.task.guide.questions:
-                lines.append(f"question: {escape(mission.task.guide.questions[0])}")
-        matches.first(Static).update("\n".join(lines))
-
-    def _selected_mission(self) -> Any:
-        matches = self.query("#mission-library")
-        if not len(matches):
-            return None
-        selected = matches.first(Select).value
-        if not isinstance(selected, str) or not selected:
-            return None
-        try:
-            return MissionStore().load(self.workspace, selected)
-        except Exception as exc:
-            self.query_one("#run-log", RichLog).write(f"[red]Run unavailable:[/] {escape(str(exc))}")
-            return None
-
-    @staticmethod
-    def _form_values(text: str) -> list[str]:
-        return [item.strip() for item in re.split(r"[,;]", text) if item.strip()]
-
-    def _selected_todo(self) -> BoardTodo | None:
-        selected = self._selected_todo_id
-        if not selected:
-            matches = self.query("#todo-select")
-            if len(matches) and isinstance(matches.first(Select).value, str):
-                selected = matches.first(Select).value
-        return next((todo for todo in self._workboard.todos if todo.id == selected), None)
-
-    def _add_todo(self) -> None:
-        field = self.query_one("#todo-input", Input)
-        todo = self._workboard_store.add_todo(self._workboard, field.value)
-        if todo is None:
-            self.notify("Enter one useful TODO item first.", title="TODO")
-            return
-        field.value = ""
-        self._selected_todo_id = todo.id
-        self._refresh_workboard()
-        self._refresh_focus()
-        self.query_one("#run-log", RichLog).write(f"[bold #89ddff]TODO added[/] {escape(todo.text)} [dim](cosmetic until launched)[/]")
-
-    def _save_learning(self) -> None:
-        focus = self.query_one("#learning-focus", Input).value
-        sources = self._form_values(self.query_one("#learning-sources", Input).value)
-        self._workboard_store.set_learning(self._workboard, focus, sources)
-        self._refresh_workboard(load_inputs=True)
-        self._refresh_focus()
-        detail = _short(focus or "no focus", 90)
-        if sources:
-            detail += " · sources: " + ", ".join(sources)
-        self.query_one("#run-log", RichLog).write(f"[bold #c3e88d]learning brief saved[/] {escape(detail)}")
-        self.narrator.record(f"learning brief: {detail}", task_id=self.task_id)
-
-    def _record_contest_comment(self) -> None:
-        field = self.query_one("#contest-input", Input)
-        text = field.value.strip()
-        if not text:
-            self.notify("Write the contest or comment before recording it.", title="Contest/comment")
-            field.focus()
-            return
-        self._workboard_store.add_comment(self._workboard, text)
-        field.value = ""
-        self._refresh_workboard()
-        self.query_one("#run-log", RichLog).write(f"[bold #ff5370]operator contest/comment recorded[/] {escape(text)}")
-        self.narrator.record(f"operator contest/comment: {text}", task_id=self.task_id)
-
-    def _complete_selected_todo(self) -> None:
-        todo = self._selected_todo()
-        if todo is None:
-            self.notify("Choose a TODO first.", title="TODO")
-            return
-        if todo.id == self._active_todo_id and (self.task_state == "running" or self._engine_busy):
-            self.notify("Stop the active sequence before marking its TODO done.", title="TODO")
-            return
-        self._workboard_store.set_todo_state(self._workboard, todo.id, "done", "marked complete by operator")
-        self._refresh_workboard()
-        self._refresh_focus()
-        self.query_one("#run-log", RichLog).write(f"[bold #c3e88d]TODO marked done[/] {escape(todo.text)}")
-
-    def _run_todo_sequence(self) -> None:
+    # -- input -----------------------------------------------------------------
+    def on_input_submitted(self, event: Input.Submitted) -> None:
         if self.task_state == "power-zero":
             return
+        composer = self.query_one("#composer", Composer)
+        value = event.value.strip()
+        composer.value = ""
+        if not value:
+            return
+        composer.remember(value)
+        self.say_you(value)
+        self.handle_line(value)
+
+    def handle_line(self, value: str) -> None:
+        """Route one typed line. Everything typed is visible; nothing is dropped."""
+
+        if value.startswith("/"):
+            self._route_command(parse_intent(value))
+            return
+        if self._pending_approval is not None:
+            self._answer_approval(value)
+            return
+        if self._pending_choice is not None:
+            self._answer_question(value)
+            return
+        if self._retry_task_id and value.casefold() in {"retry", "try again", "again"}:
+            task_id, self._retry_task_id = self._retry_task_id, None
+            self.task_state = "running"
+            self.say(f"[dim]retrying {escape(task_id)}[/]", "dim")
+            self._run_resume(task_id, [])
+            return
+        intent = parse_intent(value)
         if self.task_state == "running" or self._engine_busy:
-            self.notify("Stop the active work before starting pinned guidance.", title="Pinned sequence")
+            self._steer(value, intent)
             return
-        todo = self._selected_todo() or next((item for item in self._workboard.todos if item.state == "todo"), None)
-        if todo is None:
-            self.notify("Add or select a pending TODO first.", title="TODO sequence")
-            return
-        self._todo_sequence_active = True
-        self._active_todo_id = todo.id
-        self._workboard_store.set_todo_state(self._workboard, todo.id, "active")
-        self._refresh_workboard()
-        self.query_one("#run-log", RichLog).write(
-            f"[bold #ffcb6b]TODO sequence started[/] one item at a time · {escape(todo.text)}"
-        )
-        self._dispatch(todo.text, self.mode)
+        self._route_intent(value, intent)
 
-    def _start_next_todo(self) -> bool:
-        todo = next((item for item in self._workboard.todos if item.state == "todo"), None)
-        if todo is None:
-            return False
-        self._active_todo_id = todo.id
-        self._workboard_store.set_todo_state(self._workboard, todo.id, "active")
-        self._refresh_workboard()
-        self.query_one("#run-log", RichLog).write(
-            f"[bold #ffcb6b]TODO sequence next[/] {escape(todo.text)}"
-        )
-        self._dispatch(todo.text, self.mode)
-        return True
-
-    def _release_todo(self, state: str, evidence: str = "") -> None:
-        if self._active_todo_id:
-            self._workboard_store.set_todo_state(self._workboard, self._active_todo_id, state, evidence)
-            self._active_todo_id = None
-            self._refresh_workboard()
-
-    def _reset_controls(self) -> None:
-        self._mission_constraints = []
-        self._mission_allowed_paths = []
-        self._mission_acceptance_checks = []
-        self._mission_timeout = None
-        self._mission_setup_policy = "ask"
-        self.mode = "implement"
-        self.autonomy = "full-auto"
-        for selector in ("#mission-time", "#mission-proof", "#mission-allowed", "#mission-constraints"):
-            matches = self.query(selector)
-            if len(matches):
-                matches.first(Input).value = ""
-        matches = self.query("#mission-mode")
-        if len(matches):
-            matches.first(Select).value = "implement"
-        matches = self.query("#mission-autonomy")
-        if len(matches):
-            matches.first(Select).value = "full-auto"
-        matches = self.query("#mission-setup")
-        if len(matches):
-            matches.first(Select).value = "ask"
-        matches = self.query("#mission-variant")
-        if len(matches):
-            matches.first(Select).value = self.variant
-        self._live_value_note = "Controls reset."
-        self._refresh_focus()
-
-    def _capture_control_inputs(self, *, announce: bool = False) -> bool:
-        mode = self.query_one("#mission-mode", Select).value
-        authority = self.query_one("#mission-autonomy", Select).value
-        setup_policy = self.query_one("#mission-setup", Select).value
-        variant = self.query_one("#mission-variant", Select).value
-        time_text = self.query_one("#mission-time", Input).value.strip()
-        timeout = None
-        if time_text:
-            try:
-                timeout = max(60, int(time_text) * 60)
-            except ValueError:
-                self.notify("Time must be a whole number of minutes.", title="Live controls")
-                self.query_one("#mission-time", Input).focus()
-                return False
-        self.mode = str(mode) if isinstance(mode, str) else "implement"
-        self.autonomy = str(authority) if isinstance(authority, str) else "full-auto"
-        self._mission_setup_policy = str(setup_policy) if isinstance(setup_policy, str) else "ask"
-        if isinstance(variant, str) and variant != self.variant:
-            self.variant = variant
-            self.narrator = Narrator(variant=variant, workspace=self.workspace)
-        self._mission_timeout = timeout
-        self._mission_acceptance_checks = self._form_values(self.query_one("#mission-proof", Input).value)
-        self._mission_allowed_paths = self._form_values(self.query_one("#mission-allowed", Input).value)
-        self._mission_constraints = self._form_values(self.query_one("#mission-constraints", Input).value)
-        self._refresh_focus()
-        settings = self.query("#settings-text")
-        if len(settings):
-            settings.first(Static).update(self._settings_text())
-        if announce:
-            timing = "next dispatch" if self.task_state == "running" or self._engine_busy else "ready"
-            self.query_one("#run-log", RichLog).write(
-                f"[bold #82aaff]Controls applied[/] — mode {escape(self.mode)}, "
-                f"authority {escape(self.autonomy or 'profile')}, setup {escape(self._mission_setup_policy)} "
-                f"[dim]({timing})[/]"
-            )
-        return True
-
-    def _apply_controls(self) -> None:
-        self._capture_control_inputs(announce=True)
-
-    def _continue_selected_mission(self) -> None:
-        if self.task_state == "power-zero":
-            return
-        if self.task_state == "running" or self._engine_busy:
-            self.action_cancel()
-            self.notify("Active work cancelled. Press Continue again when ready.", title="Work still active")
-            return
-        mission = self._selected_mission()
-        if mission is None:
-            self.notify("Choose a run from History first.", title="History")
-            return
-        self.goal = mission.goal
-        self.task_id = mission.id
-        self._retry_task_id = None
-        self.task_state = "running"
-        self.phase_index = 0
-        self._focus_work = mission.goal
-        self._focus_thought = "Reopening the work loop and looking for the next improvement."
-        self._focus_next = "Update the guide, then prove the new result."
-        guide = mission.task.guide.model_dump(mode="json") if mission.task.guide else None
-        self._render_guide(guide)
-        self._refresh_focus()
-        self._show_view("activity-view")
-        self.query_one("#run-log", RichLog).write(
-            f"[bold #ffcb6b]▶ continuing run[/] {escape(mission.id)} · {escape(mission.goal)}"
-        )
-        self._run_resume(mission.id, [])
-
-    def _delete_selected_mission(self) -> None:
-        mission = self._selected_mission()
-        if mission is None:
-            self.notify("Choose a run from History first.", title="History")
-            return
-        if mission.id == self.task_id and (self.task_state == "running" or self._engine_busy):
-            self.notify("Cancel the active work before deleting its run.", title="Work still active")
-            return
-        if self._delete_armed_id != mission.id:
-            self._delete_armed_id = mission.id
-            self.query_one("#run-log", RichLog).write(
-                f"[yellow]Delete {escape(mission.id)}? Press Delete selected again to confirm.[/]"
-            )
-            return
-        try:
-            MissionStore().delete(self.workspace, mission.id)
-        except Exception as exc:
-            self.notify(f"Could not delete run: {exc}", title="History")
-            return
-        self._delete_armed_id = None
-        self._selected_mission_id = None
-        self._refresh_tasks()
-        self.query_one("#run-log", RichLog).write(f"[dim]Run deleted:[/] {escape(mission.id)}")
-
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == "mission-library":
-            self._selected_mission_id = event.value if isinstance(event.value, str) else None
-            self._delete_armed_id = None
-            self._update_library_detail(self._selected_mission_id)
-        elif event.select.id == "todo-select":
-            self._selected_todo_id = event.value if isinstance(event.value, str) else None
-        elif isinstance(event.value, str) and event.select.id in {
-            "mission-mode",
-            "mission-autonomy",
-            "mission-setup",
-            "mission-variant",
-        }:
-            current = {
-                "mission-mode": self.mode,
-                "mission-autonomy": self.autonomy or "full-auto",
-                "mission-setup": self._mission_setup_policy,
-                "mission-variant": self.variant,
-            }[event.select.id]
-            if event.value == current:
-                return
-            label = {
-                "mission-mode": "Mode",
-                "mission-autonomy": "Authority",
-                "mission-setup": "Setup policy",
-                "mission-variant": "Variant",
-            }[event.select.id]
-            if event.select.id == "mission-mode":
-                self.mode = event.value
-            elif event.select.id == "mission-autonomy":
-                self.autonomy = event.value
-            elif event.select.id == "mission-setup":
-                self._mission_setup_policy = event.value
+    def _route_intent(self, value: str, intent: Intent) -> None:
+        kind = intent.kind
+        if kind == "chdir":
+            self._rebind_workspace(intent)
+        elif kind == "selfwork":
+            target = _xander_workspace()
+            if self.workspace != target:
+                self._rebind_workspace(Intent(kind="chdir", argument=str(target)))
+                self.say("[dim]working on myself, in my own checkout[/]", "dim")
+            self._dispatch(value, self.mode if self.mode != "answer" else "implement")
+        elif kind == "feedback":
+            self._record_feedback(value)
+        elif kind == "discuss":
+            self._start_discussion(value)
+        elif kind == "advice" or self.mode == "answer":
+            self._start_chat(value)
+        elif kind == "draft":
+            self._draft = value
+            if self.mode == "plan":
+                self._dispatch(value, "plan")
             else:
-                self.variant = event.value
-                self.narrator = Narrator(variant=event.value, workspace=self.workspace)
-            timing = "next dispatch" if self.task_state == "running" or self._engine_busy else "ready"
-            self._live_value_note = f"{label} changed to {event.value}; {timing}."
-            self.query_one("#run-log", RichLog).write(
-                f"[bold #82aaff]{escape(label)}[/] → {escape(event.value)} [dim]({timing})[/]"
-            )
-            settings = self.query("#settings-text")
-            if len(settings):
-                settings.first(Static).update(self._settings_text())
-            self._refresh_focus()
-
-    def _show_view(self, view: str) -> None:
-        if view not in _VIEW_BUTTONS:
-            return
-        switcher = self.query_one("#view-switcher", ContentSwitcher)
-        switcher.current = view
-        self._current_view = view
-        for selector in _VIEW_BUTTONS.values():
-            self.query_one(selector, Button).remove_class("active-nav")
-        self.query_one(_VIEW_BUTTONS[view], Button).add_class("active-nav")
-        if view == "history-view":
-            self._refresh_tasks()
-        elif view == "system-view":
-            self._refresh_stats()
-            self.query_one("#settings-text", Static).update(self._settings_text())
-
-    def action_show_view(self, view: str) -> None:
-        self._show_view(view)
-
-    def action_toggle_loop(self) -> None:
-        if self.screen.has_class("loop-collapsed"):
-            self.screen.remove_class("loop-collapsed")
+                self.say(
+                    "[dim]I'm not sure whether that's an order or a thought. "
+                    "[bold]/work[/] runs it · [bold]/discuss[/] talks it through[/]",
+                    "dim",
+                )
         else:
-            self.screen.add_class("loop-collapsed")
+            self._dispatch(value, self.mode if self.mode != "answer" else "implement")
 
-    def action_toggle_todos(self) -> None:
-        panel = self.query_one("#todo-panel", Collapsible)
-        panel.collapsed = not panel.collapsed
+    def _steer(self, value: str, intent: Intent) -> None:
+        """A line typed mid-run: shown now, applied at the engine's next safe point."""
+
+        if _STOP_WORDS.match(value):
+            self._abort_requested = True
+            self.say("[dim]heard — stopping at the next safe point[/]", "dim")
+            return
+        if intent.kind in {"order", "selfwork"} and not any(
+            word in value.casefold() for word in ("instead", "also", "don't", "dont", "not ", "use ", "only")
+        ):
+            self._order_queue.append({"goal": value, "mode": self.mode})
+            self.say(f"[dim]queued as the next order (#{len(self._order_queue)})[/]", "dim")
+            return
+        with self._steering_lock:
+            self._steering_notes.append(value)
+        self.say("[dim]heard — I'll apply that at the next safe point[/]", "dim")
+
+    def _drain_steering(self) -> dict[str, Any]:
+        with self._steering_lock:
+            notes, self._steering_notes = self._steering_notes, []
+            abort, self._abort_requested = self._abort_requested, False
+        return {
+            "lines": [f"you said: {note}" for note in notes],
+            "constraints": notes,
+            "abort": abort,
+        }
+
+    # -- commands --------------------------------------------------------------
+    def _route_command(self, intent: Intent) -> None:
+        kind = intent.kind
+        argument = intent.argument
+        if kind == "unknown_command":
+            self.say(f"[{_WARN}]{escape(intent.reason)}[/]", "warn")
+        elif kind == "help":
+            self.action_help()
+        elif kind == "mode":
+            self._set_mode(argument)
+        elif kind == "chdir":
+            self._rebind_workspace(intent)
+        elif kind == "discuss":
+            topic = argument or self._draft
+            if not topic:
+                self.say("[dim]/discuss <topic> — or just describe the idea[/]", "dim")
+                return
+            self._start_discussion(topic)
+        elif kind == "work":
+            self._authorize_work(argument)
+        elif kind == "research":
+            if not argument:
+                self.say("[dim]/research <URL or topic>[/]", "dim")
+                return
+            self._dispatch(argument, "research")
+        elif kind == "goal":
+            self._store_goal(argument)
+        elif kind == "todo":
+            self._add_todo(argument)
+        elif kind == "talk":
+            if not argument:
+                self.say("[dim]/talk <message>[/]", "dim")
+                return
+            self._start_chat(argument)
+        elif kind == "command":
+            self._composer_command(intent)
+        else:
+            self.say(f"[{_WARN}]{escape(intent.command or '/')} has no handler[/]", "warn")
+
+    def _composer_command(self, intent: Intent) -> None:
+        name = intent.command
+        argument = intent.argument
+        if name in {"/history", "/missions"}:
+            self._show_history()
+        elif name in {"/evidence", "/proof", "/show"}:
+            self._show_evidence(argument)
+        elif name in {"/todo", "/todos"}:
+            if argument.strip().casefold() in {"run", "go", "start"}:
+                self._run_todo_sequence()
+            elif argument:
+                self._add_todo(argument)
+            else:
+                self._show_todos()
+        elif name == "/pause":
+            self.action_pause()
+        elif name == "/resume":
+            self.action_resume()
+        elif name in {"/stop", "/cancel"}:
+            self.action_cancel()
+        elif name == "/new":
+            self.action_new()
+        elif name == "/clear":
+            self.action_clear_feed()
+        elif name == "/desktop":
+            self._capture_desktop()
+        elif name == "/values":
+            self.say(
+                f"[dim]clone {escape(self.variant)} · mode {escape(_wheel_for(self.mode, self.autonomy))} · "
+                f"autonomy {escape(self.autonomy or 'profile')} · workspace {escape(str(self.workspace))}[/]",
+                "dim",
+            )
+        elif name == "/set":
+            parts = argument.split(None, 1)
+            if len(parts) == 2 and parts[0] == "mode":
+                self._set_mode(parts[1].strip())
+            elif len(parts) == 2 and parts[0] in {"authority", "autonomy"}:
+                self.autonomy = parts[1].strip()
+                self._refresh_status()
+                self.say(f"[dim]autonomy → {escape(self.autonomy)}[/]", "dim")
+            elif len(parts) == 2 and parts[0] in {"variant", "clone"}:
+                self.variant = parts[1].strip()
+                self.narrator = Narrator(variant=self.variant, workspace=self.workspace)
+                self._refresh_status()
+                self.say(f"[dim]clone → {escape(self.variant)}[/]", "dim")
+            else:
+                self.say("[dim]/set mode|autonomy|variant <value>[/]", "dim")
+        else:
+            self.say(f"[{_WARN}]{escape(name)} is gone — there are no tabs any more; everything is here[/]", "warn")
+
+    def action_help(self) -> None:
+        lines = ["[bold]Commands[/]"]
+        lines += [f"  {escape(line)}" for line in command_help("core")]
+        lines += [
+            "  /history — recent missions here · /show <id> — one mission's evidence",
+            "  /todo [task] — list or pin a TODO · /pause /resume /stop /new /clear /desktop /values",
+            "[bold]Keys[/]  shift+tab cycles ask/plan/build/yolo · ↑↓ composer history · "
+            "mouse-select then ctrl+c copies · esc back to the composer · ctrl+q quits",
+            "[bold]Plain language[/]  create/do/make… runs · a question gets an answer · "
+            "'this project is going to be…' opens a discussion",
+        ]
+        self.say("\n".join(lines), "dim")
+
+    def action_cycle_mode(self) -> None:
+        current = _wheel_for(self.mode, self.autonomy)
+        self._set_mode(MODES[(MODES.index(current) + 1) % len(MODES)])
 
     def action_focus_composer(self) -> None:
-        self.query_one("#goal-input", Input).focus()
+        self.query_one("#composer", Composer).focus()
 
-    def action_clear_activity(self) -> None:
-        self.query_one("#run-log", RichLog).clear()
-        self._activity_counts = {}
-        self.query_one("#run-log", RichLog).write("[dim]Activity cleared. Work evidence and History are unchanged.[/]")
+    def action_clear_feed(self) -> None:
+        feed = self.query_one("#feed", VerticalScroll)
+        for child in list(feed.children):
+            child.remove()
+        self._entries = 0
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        actions = {
-            "nav-activity": lambda: self._show_view("activity-view"),
-            "nav-controls": lambda: self._show_view("controls-view"),
-            "nav-evidence": lambda: self._show_view("evidence-view"),
-            "nav-history": lambda: self._show_view("history-view"),
-            "nav-system": lambda: self._show_view("system-view"),
-            "apply-controls": self._apply_controls,
-            "reset-controls": self._reset_controls,
-            "open-library": self.action_history,
-            "continue-mission": self._continue_selected_mission,
-            "delete-mission": self._delete_selected_mission,
-            "refresh-library": self.action_history,
-            "add-todo": self._add_todo,
-            "run-todo-sequence": self._run_todo_sequence,
-            "complete-todo": self._complete_selected_todo,
-            "save-learning": self._save_learning,
-            "record-contest": self._record_contest_comment,
-            "contest-stop": self.action_contest,
-        }
-        action = actions.get(event.button.id or "")
-        if action:
-            action()
-
-    def _refresh_tasks(self) -> None:
-        lines: list[str] = []
-        records = []
-        try:
-            records = MissionStore().list(self.workspace, limit=20)
-        except Exception as exc:
-            lines = [f"[red]task history unavailable: {escape(str(exc))}[/]"]
-        else:
-            if not records:
-                lines = ["[dim]no tasks yet — Xander is ready for orders[/]"]
-            for mission in records:
-                glyph, style = STATUS_GLYPHS.get(mission.status, ("·", "dim"))
-                goal = " ".join(mission.goal.split())[:64]
-                lines.append(
-                    f"[{style}]{glyph}[/] {mission.id}  "
-                    f"[dim]{mission.status} · {mission.phase}[/]  {escape(goal)}\n"
-                    f"    [dim]result:[/] {escape(_short(mission.result, 100))}"
-                )
-                for moment in mission.timeline(limit=4):
-                    kind = str(moment.get("kind", "thought")).upper()
-                    message = escape(_short(str(moment.get("message", "")), 110))
-                    lines.append(f"    [dim]{kind}:[/] {message}")
-        try:
-            library_matches = self.query("#mission-library")
-        except Exception:
-            library_matches = []
-        if len(library_matches):
-            select = library_matches.first(Select)
-            previous = select.value
-            options = [
-                (f"{mission.status.upper()} · {_short(mission.goal, 72)}", mission.id)
-                for mission in records
-            ]
-            select.set_options(options)
-            ids = {value for _, value in options}
-            if isinstance(previous, str) and previous in ids:
-                select.value = previous
-            elif options:
-                select.value = options[0][1]
-                self._selected_mission_id = options[0][1]
-            else:
-                select.clear()
-                self._selected_mission_id = None
-            self._update_library_detail(str(select.value) if isinstance(select.value, str) else None)
-        self._fill_log("#tasks-log", lines)
-
-    def _refresh_variants(self) -> None:
-        lines: list[str] = []
-        try:
-            from .cli import army_payload
-
-            report = army_payload()
-        except Exception as exc:
-            lines = [f"[red]army muster unavailable: {escape(str(exc))}[/]"]
-        else:
-            lines.append(
-                f"[bold #ffcb6b]army of {report['size']}[/] · leader: [bold]{escape(report['leader'])}[/]"
+    def _set_mode(self, wheel: str) -> None:
+        if wheel not in MODE_REQUESTS:
+            self.say(
+                "modes: " + "   ".join(f"[bold]{name}[/] [dim]{MODE_HELP[name]}[/]" for name in MODE_REQUESTS),
+                "dim",
             )
-            for row in report["ranks"]:
-                indent = "  " * int(row["depth"])
-                marker = "[bold #ffcb6b]●[/]" if row["name"] == self.variant else "[dim]○[/]"
-                lineage = f" ← {row['parent']}" if row.get("parent") else ""
-                lines.append(
-                    f"{indent}{marker} [bold]{escape(str(row['rank']))}[/] {escape(str(row['name']))} "
-                    f"[dim]v{row['version']}{escape(lineage)} · {row['autonomy']} · "
-                    f"lessons {row['lessons']} · wins {row.get('tasks_won', 0)}[/]"
-                )
-            lines.append("[dim]recruit with: xander variant clone <name> --from <source>[/]")
-        self._fill_log("#variants-log", lines)
+            return
+        engine_mode, autonomy = MODE_REQUESTS[wheel]
+        self.mode = engine_mode
+        self.autonomy = autonomy
+        self._refresh_status()
+        self.say(f"[dim]mode → {wheel} · {MODE_HELP[wheel]}[/]", "dim")
 
-    def _refresh_stats(self) -> None:
-        try:
-            from .stats import render_lines, stats_payload
-
-            lines = render_lines(stats_payload())
-        except Exception as exc:
-            lines = [f"[red]stats unavailable: {escape(str(exc))}[/]"]
-        self._fill_log("#stats-log", lines)
-
-    @work(thread=True, group="xander-meta")
-    def _load_skills_panel(self) -> None:
-        try:
-            from .skills import SkillRegistry
-
-            registry = SkillRegistry()
-            report = registry.doctor()
-            top = registry.list(limit=10, bucket="daily")
-        except Exception as exc:
-            lines = [f"[red]skill registry unavailable: {escape(str(exc))}[/]"]
-        else:
-            lines = [
-                f"[bold #c3e88d]{report.get('indexed', 0)}[/] indexed skills · "
-                f"[dim]daily {report.get('daily', 0)} · library {report.get('library', 0)} · "
-                f"roots {len(report.get('roots', []))}[/]"
-            ]
-            for item in top:
-                name = str(item.get("name", "?"))
-                category = str(item.get("category") or item.get("bucket") or "")
-                lines.append(f"  · {escape(name)} [dim]{escape(category)}[/]")
-            lines.append("[dim](quartermaster) gear is grouped by hub and bounded by useful context, not a skill count[/]")
-        self.call_from_thread(self._fill_log, "#skills-log", lines)
+    # -- conversation ----------------------------------------------------------
+    def _start_discussion(self, text: str) -> None:
+        self._draft = text
+        self.say("[dim]talking it through — nothing runs until /work[/]", "dim")
+        self._start_chat(text)
 
     def _start_chat(self, message: str) -> None:
-        field = self.query_one("#goal-input", Input)
-        field.value = ""
         if self._chat_busy:
             self._chat_queue.append(message)
-            self.query_one("#run-log", RichLog).write(
-                f"[dim]＋ queued conversation #{len(self._chat_queue)}:[/] {escape(_short(message, 100))}"
-            )
             return
         history = [*self._conversation]
         self._conversation.append({"role": "user", "content": message})
         self._conversation = self._conversation[-24:]
         self._chat_busy = True
-        self._focus_work = f"Talking with {self.variant}"
-        self._focus_decision = "Conversation only · no work record created."
-        self._focus_thought = "Reading your message and the current workspace context."
-        self._focus_next = "Answer directly, or recognize when you are asking for autonomous work."
-        self._refresh_focus()
-        self._show_view("activity-view")
-        self.query_one("#run-log", RichLog).write(
-            f"[bold #82aaff]You → {escape(self.variant)}[/]  {escape(message)}"
-        )
         self.narrator.record_chat("you", message)
+        self._thinking = self.say("[dim]…[/]", "dim")
         self._run_chat(message, history, self.variant)
 
     @work(thread=True, exclusive=True, group="xander-chat")
@@ -1634,615 +517,114 @@ class XanderApp(App[None]):
 
     def _finish_chat(self, variant: str, result: dict[str, Any]) -> None:
         self._chat_busy = False
+        thinking = getattr(self, "_thinking", None)
+        if thinking is not None:
+            thinking.remove()
+            self._thinking = None
         error = str(result.get("error") or "")
         if error:
-            self._focus_thought = f"Conversation blocked: {error}"
-            self._focus_next = "Check the selected clone's model route, then ask again."
-            self.query_one("#run-log", RichLog).write(
-                f"[bold #ff5370]{escape(variant)} could not answer[/] — {escape(_short(error, 300))}"
-            )
+            self.say(f"[{_BAD}]I can't answer right now: {escape(_short(error, 300))}[/]", "bad")
             self.narrator.record_chat(variant, f"blocked: {error}")
         else:
             answer = str(result.get("text") or "").strip()
-            stats = result.get("stats") if isinstance(result.get("stats"), dict) else {}
-            model = str(stats.get("model") or result.get("role") or "language model")
             self._conversation.append({"role": "assistant", "content": answer})
             self._conversation = self._conversation[-24:]
-            self._focus_thought = _short(answer, 150)
-            self._focus_next = "Keep talking, or type /work to run what we discussed as autonomous work."
-            self.query_one("#run-log", RichLog).write(
-                f"[bold #f78c6c]{escape(variant)}[/] [dim]via {escape(model)}[/]\n{escape(answer)}"
-            )
+            self.say_xander(answer)
             self.narrator.record_chat(variant, answer)
-        self._refresh_focus()
-        self.query_one("#goal-input", Input).focus()
+        self.query_one("#composer", Composer).focus()
         if self._chat_queue:
             self._start_chat(self._chat_queue.pop(0))
 
     # -- orders ----------------------------------------------------------------
-    def _handle_composer_command(self, intent: Intent) -> bool:
-        """Run one interface-only slash command (``intent.kind == "command"``)."""
-
-        command = intent.command
-        argument = intent.argument
-        views = {
-            "/activity": "activity-view",
-            "/controls": "controls-view",
-            "/evidence": "evidence-view",
-            "/history": "history-view",
-            "/xander": "system-view",
-        }
-        if command in views:
-            self._show_view(views[command])
-            return True
-        actions = {
-            "/loop": self.action_toggle_loop,
-            "/todos": self.action_toggle_todos,
-            "/pause": self.action_pause,
-            "/resume": self.action_resume,
-            "/stop": self.action_contest,
-            "/cancel": self.action_cancel,
-            "/new": self.action_new,
-            "/clear": self.action_clear_activity,
-            "/desktop": self.action_desktop,
-        }
-        if command in actions:
-            actions[command]()
-            return True
-        if command == "/todo":
-            if not argument:
-                self.action_toggle_todos()
-                return True
-            self._add_todo_text(argument)
-            return True
-        if command == "/set":
-            key, _, selected = argument.partition(" ")
-            selectors = {
-                "mode": "#mission-mode",
-                "authority": "#mission-autonomy",
-                "setup": "#mission-setup",
-                "variant": "#mission-variant",
-            }
-            selector = selectors.get(key.casefold())
-            if not selector or not selected.strip():
-                self.notify("Use /set mode|authority|setup|variant <value>.", title="Live values")
-                return True
-            select = self.query_one(selector, Select)
-            try:
-                select.value = selected.strip()
-            except Exception:
-                self.notify(f"{selected.strip()} is not available for {key}.", title="Live values")
-            return True
-        if command == "/values":
-            self.notify(
-                f"mode {self.mode} · authority {self.autonomy or 'profile'} · "
-                f"setup {self._mission_setup_policy} · variant {self.variant}",
-                title="Live values",
-            )
-            return True
-        return False
-
-    def _explain_unknown_command(self, intent: Intent) -> None:
-        self.query_one("#run-log", RichLog).write(
-            f"[bold yellow]Unknown command[/] {escape(intent.command)} — {escape(intent.reason)}"
-        )
-        self.notify(f"Unknown command: {intent.command}. Type /help.", title="Composer")
-        self.narrator.record(f"unknown command explained, not run: {intent.command}", task_id=self.task_id)
-
-    def _write_command_help(self) -> None:
-        log = self.query_one("#run-log", RichLog)
-        log.write(
-            "[bold #ffcb6b]Commands[/] [dim]anything starting with / is a command; "
-            "an unknown one is explained, never run[/]"
-        )
-        for line in command_help("core"):
-            usage, _, summary = line.partition(" — ")
-            log.write(f"  [bold]{escape(usage)}[/] [dim]{escape(summary)}[/]")
-        interface = "  ".join(line.partition(" — ")[0] for line in command_help("tui"))
-        log.write(f"  [dim]interface: {escape(interface)}[/]")
-        log.write(
-            "[dim]Plain language: a question is a conversation · \"this project is going to be about …\" "
-            "opens a discussion · \"create …\" or \"do …\" authorizes work · anything unclear is kept "
-            "as a draft for /discuss or /work.[/]"
-        )
-
-    def _keep_draft(self, text: str, reason: str) -> None:
-        """Hold an unclear line instead of guessing between talk and work."""
-
-        self._draft = text
-        self._focus_thought = "Not sure whether that is discussion or an order, so nothing ran."
-        self._focus_next = "/discuss talks it through · /work runs it · or start with create, do, make."
-        self._refresh_focus()
-        self.query_one("#run-log", RichLog).write(
-            f"[bold #c792ea]Kept as a draft[/] {escape(_short(text, 120))}\n"
-            f"[dim]{escape(reason)}. /discuss talks it through, /work runs it as work; "
-            "starting a line with create, do, make, or fix authorizes work directly.[/]"
-        )
-        self.narrator.record(f"draft kept (not run): {text}", task_id=self.task_id)
-
-    def _start_discussion(self, text: str) -> None:
-        """Open a discussion and keep the line as the draft ``/work`` would run."""
-
-        self._draft = text
-        self.query_one("#run-log", RichLog).write(
-            "[bold #c792ea]Discussion[/] [dim]analysis, ideas, and planning only · /work authorizes it later[/]"
-        )
-        self._start_chat(text)
-
     def _authorize_work(self, argument: str) -> None:
-        """``/work``: the given goal, else the kept draft, else the newest open goal."""
-
-        goal = argument.strip()
-        source = "typed"
+        goal, source = argument.strip(), "typed"
         if not goal and self._draft:
             goal, source = self._draft, "draft"
         if not goal:
             open_goals = self._workboard_store.open_goals(self._workboard)
             if open_goals:
                 goal, source = open_goals[-1].text, "stored goal"
-        run_log = self.query_one("#run-log", RichLog)
         if not goal:
-            run_log.write(
-                "[bold yellow]Nothing to work on[/] — /work <goal>, or discuss something first, "
-                "or store one with /goal."
-            )
+            self.say("[dim]nothing to work on — /work <goal>, or discuss something first[/]", "dim")
             return
         self._draft = ""
-        engine_mode = self.mode if self.mode != "answer" else "implement"
-        run_log.write(f"[bold #ffcb6b]Work authorized[/] [dim]({source})[/] {escape(_short(goal, 120))}")
-        self._dispatch_or_queue(goal, engine_mode)
-
-    def _run_research(self, argument: str) -> None:
-        subject = argument.strip()
-        run_log = self.query_one("#run-log", RichLog)
-        if not subject:
-            run_log.write("[bold yellow]Research needs a subject[/] — /research <URL or topic>")
-            return
-        run_log.write(
-            f"[bold #82aaff]Research[/] {escape(_short(subject, 120))} "
-            "[dim]read-only · sources and limits are reported[/]"
-        )
-        self._dispatch_or_queue(subject, "research")
+        if source != "typed":
+            self.say(f"[dim]working on the {source}: {escape(_short(goal, 120))}[/]", "dim")
+        self._dispatch(goal, self.mode if self.mode != "answer" else "implement")
 
     def _store_goal(self, argument: str) -> None:
-        run_log = self.query_one("#run-log", RichLog)
         text = argument.strip()
         if not text:
             open_goals = self._workboard_store.open_goals(self._workboard)
             if not open_goals:
-                run_log.write("[dim]No stored goals for this workspace. /goal <goal> stores one.[/]")
+                self.say("[dim]no stored goals here · /goal <goal> stores one[/]", "dim")
                 return
-            run_log.write("[bold #89ddff]Stored goals[/] [dim]newest last · /work runs the newest[/]")
-            for goal in open_goals:
-                run_log.write(f"  [dim]{escape(goal.id)}[/] {escape(goal.text)}")
+            self.say("\n".join(f"  [dim]{escape(g.id)}[/] {escape(g.text)}" for g in open_goals), "dim")
             return
         goal = self._workboard_store.add_goal(self._workboard, text)
-        if goal is None:
+        if goal is not None:
+            self.say("[dim]goal stored · /work runs it[/]", "dim")
+
+    def _add_todo(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            self.say("[dim]/todo <task>[/]", "dim")
             return
-        self._refresh_workboard()
-        self._refresh_focus()
-        run_log.write(
-            f"[bold #89ddff]Goal stored[/] {escape(goal.text)} "
-            "[dim](direction only — nothing runs until /work)[/]"
-        )
-        self.narrator.record(f"goal stored: {goal.text}", task_id=self.task_id)
+        todo = self._workboard_store.add_todo(self._workboard, text)
+        if todo is not None:
+            self.say(f"[dim]pinned: {escape(todo.text)}[/]", "dim")
 
-    def _add_todo_text(self, text: str) -> None:
-        self.query_one("#todo-input", Input).value = text
-        self._add_todo()
+    def _run_todo_sequence(self) -> None:
+        """Work the pinned TODOs one at a time; each must verify before the next starts."""
 
-    def _route_command(self, intent: Intent) -> None:
-        """Act on one resolved slash command."""
-
-        kind = intent.kind
-        if kind == "unknown_command":
-            self._explain_unknown_command(intent)
-        elif kind == "help":
-            self._write_command_help()
-            self.action_help()
-        elif kind == "mode":
-            self._set_mode(intent.argument)
-        elif kind == "chdir":
-            self._rebind_workspace(intent)
-        elif kind == "discuss":
-            topic = intent.argument or self._draft
-            if not topic:
-                self.query_one("#run-log", RichLog).write(
-                    "[bold yellow]Nothing to discuss yet[/] — /discuss <topic>, or just describe the idea."
-                )
-                return
-            self._start_discussion(topic)
-        elif kind == "work":
-            self._authorize_work(intent.argument)
-        elif kind == "research":
-            self._run_research(intent.argument)
-        elif kind == "goal":
-            self._store_goal(intent.argument)
-        elif kind == "todo":
-            if not intent.argument:
-                self.notify("Use /addtodo <task>.", title="TODO")
-                return
-            self._add_todo_text(intent.argument)
-        elif kind == "talk":
-            if not intent.argument:
-                self.notify("Use /talk <message> to speak with the selected clone.", title="Conversation")
-                return
-            self._start_chat(intent.argument)
-        elif kind == "command" and self._handle_composer_command(intent):
-            return
-        else:
-            self._explain_unknown_command(
-                Intent(kind="unknown_command", command=intent.command or "/", reason="this command has no handler here")
-            )
-
-    def _dispatch_or_queue(self, goal: str, engine_mode: str) -> None:
         if self.task_state == "running" or self._engine_busy:
-            self._order_queue.append({"goal": goal, "mode": engine_mode})
-            self.query_one("#run-log", RichLog).write(
-                f"[dim]＋ queued order #{len(self._order_queue)}:[/] {escape(_short(goal, 100))}"
-            )
+            self.say("[dim]finish or /stop the current work first[/]", "dim")
             return
-        self._dispatch(goal, engine_mode)
+        self._todo_sequence_active = True
+        if not self._start_next_todo():
+            self._todo_sequence_active = False
+            self.say("[dim]no open TODOs to run · /todo <task> pins one[/]", "dim")
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if self.task_state == "power-zero":
-            return
-        if event.input.id == "todo-input":
-            self._add_todo()
-            return
-        if event.input.id in {"learning-focus", "learning-sources"}:
-            self._save_learning()
-            return
-        if event.input.id == "contest-input":
-            self._record_contest_comment()
-            return
-        if event.input.id in {"mission-time", "mission-proof", "mission-allowed", "mission-constraints"}:
-            self._apply_controls()
-            return
-        value = event.value.strip()
-        if not value:
-            return
-        goal_input = self.query_one("#goal-input", Input)
-        if event.input.id == "goal-input" and value.startswith("/"):
-            # Every slash line is a command: resolved, or explained. It never
-            # reaches an approval prompt, a shell, or a model as plain text.
-            goal_input.value = ""
-            self._route_command(parse_intent(value))
-            return
-        if self._pending_approval is not None:
-            self._answer_approval(value)
-            return
-        if self._pending_choice is not None:
-            self._answer_question(value)
-            return
-        if self._retry_task_id and value.casefold() in {"retry", "try again"}:
-            task_id = self._retry_task_id
-            self._retry_task_id = None
-            goal_input.value = ""
-            self.task_state = "running"
-            self.query_one("#run-log", RichLog).write(
-                f"[bold #ffcb6b]▶ retrying[/] [dim]{escape(task_id)} in {escape(str(self.workspace))}[/]"
-            )
-            self._run_resume(task_id, [])
-            return
-        intent = parse_intent(value)
-        if intent.kind == "chdir":
-            goal_input.value = ""
-            self._rebind_workspace(intent)
-            return
-        if intent.kind == "selfwork":
-            goal_input.value = ""
-            target = _xander_workspace()
-            if self.workspace != target:
-                if self.task_state == "running" or self._engine_busy:
-                    self._order_queue.append(
-                        {"goal": value, "mode": self.mode, "workspace": str(target)}
-                    )
-                    self.query_one("#run-log", RichLog).write(
-                        f"[dim]＋ queued self-work in {escape(str(target))}:[/] "
-                        f"{escape(_short(value, 100))}"
-                    )
-                    return
-                self._rebind_workspace(Intent(kind="chdir", argument=str(target)))
-                self.query_one("#run-log", RichLog).write(
-                    "[bold #89ddff]self-target detected[/] working in Xander's checkout"
-                )
-            if self.task_state == "running" or self._engine_busy:
-                self._order_queue.append({"goal": value, "mode": self.mode})
-                return
-            self._dispatch(value, self.mode)
-            return
-        if intent.kind == "feedback":
-            # Feedback lands immediately — even mid-run — and never queues as work.
-            goal_input.value = ""
-            self._record_feedback(value)
-            return
-        if intent.kind == "discuss":
-            goal_input.value = ""
-            self._start_discussion(value)
-            return
-        if intent.kind == "advice" or self.mode == "answer":
-            self._start_chat(value)
-            return
-        if intent.kind == "draft":
-            goal_input.value = ""
-            if self.mode == "plan":
-                # Planning applies nothing, so an unclear line may still be prepared.
-                self._dispatch_or_queue(value, self.mode)
-                return
-            self._keep_draft(value, intent.reason)
-            return
-        goal_input.value = ""
-        self._draft = ""
-        self._dispatch_or_queue(value, self.mode)
+    def _start_next_todo(self) -> bool:
+        for todo in self._workboard.todos:
+            if todo.state == "todo":
+                self._workboard_store.set_todo_state(self._workboard, todo.id, "active")
+                self._active_todo_id = todo.id
+                self.goal = todo.text
+                self.task_state = "running"
+                self.say(f"[dim]TODO → {escape(todo.text)}[/]", "dim")
+                self._run_goal(todo.text, self.mode if self.mode != "answer" else "implement")
+                return True
+        return False
 
-    def _approve_action(self, action: Any, reason: str) -> bool:
-        decision = Event()
-        pending = {
-            "event": decision,
-            "approved": False,
-            "action": action,
-            "reason": reason,
-        }
-        try:
-            self.call_from_thread(self._show_action_approval, pending)
-        except Exception:
-            return False
-        try:
-            from textual.worker import get_current_worker
+    def _release_todo(self, state: str, evidence: str = "") -> None:
+        if self._active_todo_id:
+            self._workboard_store.set_todo_state(self._workboard, self._active_todo_id, state, evidence)
+        self._active_todo_id = None
 
-            worker = get_current_worker()
-        except Exception:
-            worker = None
-        while not decision.wait(0.1):
-            if worker is not None and worker.is_cancelled:
-                return False
-        return bool(pending.get("approved"))
-
-    def _show_action_approval(self, pending: dict[str, Any]) -> None:
-        self._pending_approval = pending
-        self.task_state = "approval"
-        action = pending.get("action")
-        data = action.model_dump(mode="json") if hasattr(action, "model_dump") else {}
-        kind = str(data.get("kind") or "action")
-        target = str(data.get("path") or " ".join(data.get("argv") or []) or data.get("expected") or "step")
-        reason = str(pending.get("reason") or "this action needs approval")
-        log = self.query_one("#run-log", RichLog)
-        log.write(
-            f"[bold yellow]Approval needed[/] — {escape(kind)} {escape(_short(target, 130))}\n"
-            f"[dim]{escape(_short(reason, 150))} · type yes or no[/]"
-        )
-        self._focus_thought = f"Waiting for approval: {kind}"
-        self._focus_next = "Type yes to run this action once, or no to stop it."
-        self._refresh_focus()
-        self.query_one("#goal-input", Input).focus()
-
-    def _resolve_pending_approval(self, approved: bool) -> bool:
-        pending = self._pending_approval
-        if pending is None:
-            return False
-        pending["approved"] = approved
-        self._pending_approval = None
-        self.task_state = "running"
-        pending["event"].set()
-        self.query_one("#run-log", RichLog).write(
-            f"[bold #c3e88d]approval {'granted' if approved else 'denied'}[/]"
-        )
-        return True
-
-    def _answer_approval(self, value: str) -> None:
-        choice = value.strip().casefold()
-        if choice in {"yes", "y", "approve", "allow", "1"}:
-            self._resolve_pending_approval(True)
-        elif choice in {"no", "n", "deny", "decline", "2"}:
-            self._resolve_pending_approval(False)
-        else:
-            self.query_one("#run-log", RichLog).write(
-                "[bold yellow]?[/] approval expects yes or no"
-            )
-        self.query_one("#goal-input", Input).value = ""
-
-    def _answer_question(self, value: str) -> None:
-        pending = self._pending_choice or {}
-        options: list[str] = pending.get("options", [])
-        tokens = [token for token in value.replace(",", " ").split() if token]
-        selected: list[str] = []
-        for token in tokens:
-            if token.isdigit() and 1 <= int(token) <= len(options):
-                selected.append(options[int(token) - 1])
-            elif token in options:
-                selected.append(token)
-            else:
-                self.query_one("#run-log", RichLog).write(
-                    f"[bold yellow]?[/] unknown option {escape(token)} — answer with numbers or ids"
-                )
-                return
-        self._pending_choice = None
-        self.query_one("#goal-input", Input).value = ""
-        self.task_state = "running"
-        self.query_one("#run-log", RichLog).write(
-            f"[bold #ffcb6b]▶ decision received[/] [dim]{escape(', '.join(selected))}[/]"
-        )
-        self._run_resume(str(pending.get("task_id", "")), selected)
-
-    def action_new(self) -> None:
-        if self.task_state == "power-zero":
+    def _show_todos(self) -> None:
+        todos = [t for t in self._workboard.todos if t.state != "done"]
+        if not todos:
+            self.say("[dim]no open TODOs here[/]", "dim")
             return
-        self._resolve_pending_approval(False)
-        if self.task_state == "running" or self._engine_busy:
-            self.action_cancel()
-        if self._pending_choice is not None:
-            pending_task = self._pending_choice.get("task_id", "")
-            self._pending_choice = None
-            self.query_one("#run-log", RichLog).write(
-                f"[dim]question dismissed — resume later with: xander resume {escape(str(pending_task))} --select <id>[/]"
-            )
-        self.goal = ""
-        self._focus_work = "Waiting for an outcome"
-        self._focus_thought = "Give Xander one outcome to understand and prove."
-        self._focus_decision = "No decision yet."
-        self._focus_change = "Nothing changed yet."
-        self._focus_next = "Start with create, do, or make to authorize work · /discuss to think first · /help for commands."
-        self._activity_counts = {}
-        self._retry_task_id = None
-        self.task_id = "new"
-        self.phase_index = 0
-        self.task_state = "idle"
-        self._current_guide = None
-        self._known_guide_step_ids = set()
-        self._live_value_note = "Ready for an outcome."
-        goal_input = self.query_one("#goal-input", Input)
-        goal_input.value = ""
-        self._reset_controls()
-        goal_input.focus()
-        self._render_guide(None)
-        self._show_view("activity-view")
-
-    def action_cancel(self) -> None:
-        self._resolve_pending_approval(False)
-        workers = [worker for worker in self.workers if worker.group == "xander-task"]
-        if not workers and not self._engine_busy and self.task_state != "running":
-            return
-        for worker in workers:
-            worker.cancel()
-        self._order_queue.clear()
-        self._todo_sequence_active = False
-        self._release_todo("todo", "operator cancelled before verification")
-        self._retry_task_id = None
-        self.task_state = "paused"
-        self._flush_activity()
-        self._activity_counts = {}
-        self._focus_thought = "The active work was cancelled by the operator."
-        self._focus_next = "Start new work, or return to History to resume an older run."
-        self._refresh_focus()
-        self.query_one("#run-log", RichLog).write(
-            "[bold #ff5370]■ active work cancelled[/] [dim]— the current atomic step may wind down; no queued work will start[/]"
-        )
-        self.query_one("#goal-input", Input).focus()
-
-    def _open_contest_editor(self) -> None:
-        self._show_view("controls-view")
-        self.query_one("#contest-panel", Collapsible).collapsed = False
-        focus = self.query_one("#contest-input", Input).focus
-        focus()
-        self.call_after_refresh(focus)
-
-    def action_contest(self) -> None:
-        self._resolve_pending_approval(False)
-        workers = [worker for worker in self.workers if worker.group == "xander-task"]
-        if not workers and not self._engine_busy and self.task_state != "running":
-            self._open_contest_editor()
-            self.notify("No active AI work; enter a contest/comment below.", title="Contest/comment")
-            return
-        for worker in workers:
-            worker.cancel()
-        self._order_queue.clear()
-        self._todo_sequence_active = False
-        self._release_todo("todo", "operator stopped work for contest")
-        self._retry_task_id = self.task_id if self.task_id != "new" else None
-        self.task_state = "needs-attention"
-        self._flush_activity()
-        self._activity_counts = {}
-        self._focus_thought = "Work stopped so the operator can contest the approach."
-        self._focus_next = "Write a contest/comment, then resume only after the direction is clear."
-        self._refresh_focus()
-        self.query_one("#run-log", RichLog).write(
-            "[bold #ff5370]■ AI work stopped for contest[/] [dim]the active TODO remains pending; comment before resuming[/]"
-        )
-        self._open_contest_editor()
-
-    def action_run(self) -> None:
-        if self.task_state == "power-zero":
-            return
-        goal_input = self.query_one("#goal-input", Input)
-        goal = (goal_input.value or self.goal).strip()
-        if not goal or self.task_state == "running":
-            return
-        if self._engine_busy:
-            self.query_one("#run-log", RichLog).write(
-                "[yellow]previous engine run is still winding down — order queued[/]"
-            )
-            self._order_queue.append({"goal": goal, "mode": self.mode})
-            goal_input.value = ""
-            return
-        self._dispatch(goal, self.mode)
+        self.say("\n".join(f"  [dim]{escape(t.state)}[/] {escape(t.text)}" for t in todos), "dim")
 
     def _dispatch(self, goal: str, engine_mode: str) -> None:
         if self.task_state == "power-zero":
             return
-        if not self._capture_control_inputs():
+        if self.task_state == "running" or self._engine_busy:
+            self._order_queue.append({"goal": goal, "mode": engine_mode})
+            self.say(f"[dim]queued as the next order (#{len(self._order_queue)})[/]", "dim")
             return
-        if engine_mode not in {"answer", "research"}:
-            # The live mode wheel wins for ordinary work; explicit read-only
-            # requests (/research) keep their own mode.
-            engine_mode = self.mode
-        self._active_run_mode = engine_mode
         self.goal = goal
-        self._current_guide = None
-        self._known_guide_step_ids = set()
-        self._focus_work = goal
-        self._focus_thought = "Starting with local context and a bounded plan."
-        self._focus_decision = "Choose a bounded path from local evidence."
-        self._focus_change = "No changes in this outcome yet."
-        self._focus_next = "Understand → Plan → Work → Proof."
-        self._activity_counts = {}
-        self._refresh_focus()
         self._retry_task_id = None
+        self._last_result = None
         self.task_state = "running"
-        self.phase_index = 0
-        authority = self.autonomy or "profile"
-        self.query_one("#run-log", RichLog).write(
-            f"[bold #ffcb6b]Autonomous work accepted[/] — {escape(goal)}\n"
-            f"[dim]clone {escape(self.variant)} · mode {escape(engine_mode)} · autonomy {escape(authority)}[/]"
-        )
-        self._show_view("activity-view")
-        self._refresh_focus()
         self._run_goal(goal, engine_mode)
 
-    def _set_mode(self, wheel: str) -> None:
-        run_log = self.query_one("#run-log", RichLog)
-        if wheel not in MODE_REQUESTS:
-            run_log.write(
-                "[yellow]modes:[/] "
-                + "   ".join(f"[bold]{name}[/] [dim]{MODE_HELP[name]}[/]" for name in MODE_REQUESTS)
-            )
-            return
-        engine_mode, autonomy = MODE_REQUESTS[wheel]
-        self.mode = engine_mode
-        self.autonomy = autonomy
-        self._refresh_focus()
-        run_log.write(f"[bold #ffcb6b]mode → {wheel}[/] [dim]{MODE_HELP[wheel]}[/]")
-
-    def _record_feedback(self, text: str) -> None:
-        run_log = self.query_one("#run-log", RichLog)
-        kind = "dislike"
-        if re.search(r"\b(?:like|love|prefer|always|more)\b", text, re.IGNORECASE) and not re.search(
-            r"\b(?:do\s*n[o']t\s+like|dislike|hate|never|stop|less)\b", text, re.IGNORECASE
-        ):
-            kind = "like"
-        try:
-            from .memory import MemoryStore
-
-            namespace = self.variant
-            try:
-                from .variants import load_variant
-
-                namespace = load_variant(self.variant).memory_namespace or self.variant
-            except Exception:
-                pass
-            MemoryStore(namespace=namespace).add_preference(text, kind=kind, source="explicit")
-            from .commentary import Commentator
-
-            line = Commentator(voice="quiet").say("feedback_ack", text=text)
-            run_log.write(f"[italic #f78c6c]❝ {escape(line)}[/]")
-            self.narrator.record(f"preference recorded ({kind}): {text}", task_id=self.task_id)
-        except Exception as exc:
-            run_log.write(f"[red]could not record that preference: {escape(str(exc))}[/]")
-
     def _rebind_workspace(self, intent: Intent) -> None:
-        run_log = self.query_one("#run-log", RichLog)
         if self.task_state == "running" or self._engine_busy:
-            run_log.write("[yellow]workspace stays put mid-run — I'll move after this task lands[/]")
+            self.say("[dim]I'll move after this task lands[/]", "dim")
             return
         target = resolve_target(intent.argument, self.workspace)
         try:
@@ -2250,33 +632,42 @@ class XanderApp(App[None]):
                 target.mkdir(parents=True)
             target = target.resolve(strict=True)
         except OSError as exc:
-            run_log.write(f"[red]can't rebind the workspace: {escape(str(exc))}[/]")
+            self.say(f"[{_BAD}]can't open {escape(str(target))}: {escape(str(exc))}[/]", "bad")
             return
         if not target.is_dir():
-            run_log.write(f"[red]not a directory: {escape(str(target))}[/]")
+            self.say(f"[{_BAD}]not a folder: {escape(str(target))}[/]", "bad")
             return
         self.workspace = target
         self._workboard = self._workboard_store.load(self.workspace)
-        self._selected_todo_id = None
         self.narrator = Narrator(variant=self.variant, workspace=self.workspace)
         self._branch, self._dirty_count = _repository_status(self.workspace)
-        self._refresh_focus()
-        run_log.write(f"[bold #ffcb6b]workspace →[/] {escape(str(target))}")
-        self._refresh_workboard(load_inputs=True)
-        self._refresh_tasks()
-        self._refresh_focus()
+        self._refresh_status()
+        self.say(f"[dim]workspace → {escape(str(target))}[/]", "dim")
 
+    def _record_feedback(self, text: str) -> None:
+        kind = "dislike"
+        if re.search(r"\b(?:like|love|prefer|always|more)\b", text, re.IGNORECASE) and not re.search(
+            r"\b(?:do\s*n[o']t\s+like|dislike|hate|never|stop|less)\b", text, re.IGNORECASE
+        ):
+            kind = "like"
+        try:
+            from .memory import MemoryStore
+            from .variants import load_variant
+
+            namespace = load_variant(self.variant).memory_namespace or self.variant
+            MemoryStore(namespace=namespace).add_preference(text, kind=kind, source="explicit")
+            self.say("[dim]noted — I'll keep that in mind[/]", "dim")
+            self.narrator.record(f"preference recorded ({kind}): {text}", task_id=self.task_id)
+        except Exception as exc:
+            self.say(f"[{_BAD}]couldn't note that: {escape(str(exc))}[/]", "bad")
+
+    # -- engine ----------------------------------------------------------------
     @work(thread=True, exclusive=True, group="xander-task")
     def _run_goal(self, goal: str, engine_mode: str | None = None) -> None:
         self._invoke_and_finish(
             engine_mode or self.mode,
             goal=goal,
             autonomy=self.autonomy if self.caller == "human" else "proposal-only",
-            constraints=[*self._mission_constraints, *self._learning_constraints()],
-            acceptance_checks=self._mission_acceptance_checks,
-            allowed_paths=self._mission_allowed_paths,
-            timeout=self._mission_timeout,
-            setup_policy=self._mission_setup_policy,
             log_events=False,
         )
 
@@ -2307,6 +698,7 @@ class XanderApp(App[None]):
                 caller=self.caller,
                 event_sink=sink,
                 approve=self._approve_action if self.caller == "human" else None,
+                steering=self._drain_steering,
                 **request,
             )
         except Exception as exc:
@@ -2320,119 +712,250 @@ class XanderApp(App[None]):
         payload = event.model_dump(mode="json") if hasattr(event, "model_dump") else event
         if not isinstance(payload, dict):
             payload = {"message": str(payload)}
-        phase = str(payload.get("phase", "")).casefold()
-        if phase in _PHASE_INDEXES:
-            self.phase_index = _PHASE_INDEXES[phase]
+        self.narrator.narrate(payload)  # plain-text log twin on disk
+        line, style = self._render_event(payload)
+        if line:
+            self.say(line, style)
+
+    def _render_event(self, payload: dict[str, Any]) -> tuple[str, str]:
+        """One feed line per event that carries news; silence for the rest."""
+
+        kind = str(payload.get("type") or "")
+        message = str(payload.get("message") or "")
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        guide = data.get("guide") if isinstance(data.get("guide"), dict) else None
-        if guide:
-            self._render_guide(guide)
-        self._update_focus(payload)
-        channel, narrated = self.narrator.narrate(payload)
-        line = self._human_event_line(payload, narrated)
-        if not line:
-            return
-        if channel != "run":
-            self.query_one(_CHANNELS[channel], RichLog).write(line)
-        self._write_activity(payload, line)
+        if kind == "phase":
+            phase = str(data.get("phase") or payload.get("phase") or "")
+            return f"[dim]· {escape(_PHASE_TEXT.get(phase, message))}[/]", "dim"
+        if kind == "action" or kind == "patch":
+            result = data.get("result") if isinstance(data.get("result"), dict) else None
+            action = data.get("action") if isinstance(data.get("action"), dict) else {}
+            if result is None:
+                what = action.get("path") or " ".join(action.get("argv") or []) or action.get("expected") or message
+                return f"[dim]▸ {escape(_short(str(what), 140))}[/]", "dim"
+            status = str(result.get("status") or "")
+            if status == "ok":
+                changed = ", ".join(result.get("changed_paths") or [])
+                out = _short(str(result.get("stdout") or ""), 200)
+                tail = changed or out
+                return f"[{_OK}]✓[/] {escape(tail) if tail else 'ok'}", "ok"
+            reason = result.get("reason") or _short(str(result.get("stderr") or ""), 200) or status
+            return f"[{_BAD}]✗ {escape(str(reason))}[/]", "bad"
+        if kind == "test":
+            status = str(data.get("status") or "")
+            name = str(data.get("name") or message)
+            if status == "ok":
+                return f"[{_OK}]✓ check: {escape(_short(name, 120))}[/]", "ok"
+            if status:
+                return f"[{_BAD}]✗ check: {escape(_short(name, 120))}[/]", "bad"
+            return f"[dim]· checking {escape(_short(name, 120))}[/]", "dim"
+        if kind == "approval":
+            return "", "dim"  # the approval prompt itself is shown by _show_action_approval
+        if kind == "steering":
+            return f"[dim]↳ {escape(_short(message, 160))}[/]", "dim"
+        if kind == "error":
+            return f"[{_BAD}]✗ {escape(_short(message, 300))}[/]", "bad"
+        if kind == "plan":
+            steps = data.get("actions") or data.get("steps") or []
+            count = len(steps) if isinstance(steps, list) else steps
+            decision = str(data.get("decision") or message)
+            return f"[dim]plan · {escape(_short(decision, 160))}" + (f" · {count} step(s)" if count else "") + "[/]", "dim"
+        if kind == "result":
+            if data.get("answer"):
+                return "", "dim"  # answered in _finish so it always comes last
+            return "", "dim"
+        if kind == "voice":
+            return f"[dim italic]{escape(_short(message, 160))}[/]", "dim"
+        if kind == "delegation" and data.get("delegates"):
+            helpers = [h for h in data.get("delegates") or [] if h != "local execution"]
+            return (f"[dim]with {escape(', '.join(helpers))}[/]", "dim") if helpers else ("", "dim")
+        if kind == "research":
+            sources = data.get("sources") or []
+            return (f"[dim]read {len(sources)} source(s)[/]", "dim") if sources else ("", "dim")
+        return "", "dim"
 
     def _finish(self, result: dict[str, Any]) -> None:
         task = result.get("task") if isinstance(result.get("task"), dict) else {}
         handoff = result.get("handoff") if isinstance(result.get("handoff"), dict) else {}
         self.task_id = str(result.get("task_id") or task.get("id") or handoff.get("task_id") or self.task_id)
-        status = result.get("status") or task.get("status") or handoff.get("status")
-        successful = bool(result.get("ok")) or str(status or "").casefold() in {
-            "complete",
-            "completed",
-        }
-        run_log = self.query_one("#run-log", RichLog)
+        status = str(result.get("status") or task.get("status") or handoff.get("status") or "").casefold()
+        successful = bool(result.get("ok")) or status in {"complete", "completed"}
+        self._last_result = result
         options = [
             option
             for option in ((task.get("plan") or {}).get("options") or [])
             if isinstance(option, dict) and option.get("id")
         ]
-        if str(status or "").casefold() == "waiting_approval" and options:
-            self._retry_task_id = None
+        if status == "waiting_approval" and options:
             self._ask_question(options)
-            self._refresh_tasks()
             return
         self.task_state = "complete" if successful else "needs-attention"
         self._retry_task_id = None if successful else self.task_id
-        self.phase_index = 7
-        self._refresh_focus()
-        self._update_focus(
-            {
-                "type": "result",
-                "status": status or ("completed" if successful else "needs-attention"),
-                "message": "goal verified" if successful else "task needs attention",
-                "data": result,
-            }
-        )
-        guide = task.get("guide") if isinstance(task.get("guide"), dict) else None
-        if guide:
-            self._render_guide(guide)
-        self._flush_activity()
-        self._activity_counts = {}
-        for line in self.narrator.summarize(result):
-            run_log.write(line)
+        self.narrator.summarize(result)
+
+        answer = ""
+        for item in reversed(task.get("evidence") or []):
+            if isinstance(item, dict) and item.get("kind") in {"answer", "result"} and item.get("text"):
+                answer = str(item["text"])
+                break
+        if not answer:
+            plan = task.get("plan") if isinstance(task.get("plan"), dict) else {}
+            if task.get("evidence") and any(
+                isinstance(e, dict) and e.get("kind") == "quick" for e in task.get("evidence") or []
+            ):
+                answer = str(plan.get("summary") or "")
+        if successful:
+            self.say_xander(answer or self._describe_success(task))
+        else:
+            failure = str(result.get("error") or task.get("failure") or "it didn't verify")
+            self.say_xander(f"I couldn't finish that: {_short(failure, 240)}  — say retry, or tell me what to change.")
         lesson = str(task.get("lesson") or "")
-        if lesson:
+        if lesson and not any(isinstance(e, dict) and e.get("kind") == "quick" for e in task.get("evidence") or []):
             self._workboard_store.add_observed_lesson(self._workboard, lesson)
-            run_log.write(f"[bold #c3e88d]learning recorded automatically[/] {escape(_short(lesson, 150))}")
+        self._branch, self._dirty_count = _repository_status(self.workspace)
+        self._refresh_status()
+        self.query_one("#composer", Composer).focus()
         if self._todo_sequence_active and self._active_todo_id:
             if successful:
-                self._release_todo("done", lesson or "verified task result")
-                run_log.write("[bold #c3e88d]TODO verified[/] advancing to the next item")
-                self._refresh_workboard()
+                self._release_todo("done", lesson or "verified")
                 if self._start_next_todo():
                     return
                 self._todo_sequence_active = False
-                run_log.write("[bold #c3e88d]TODO sequence complete[/] all pending items are verified")
+                self.say("[dim]every pinned TODO is done[/]", "dim")
             else:
-                self._release_todo("blocked", str(task.get("failure") or "task did not verify"))
+                self._release_todo("blocked", str(task.get("failure") or "did not verify"))
                 self._todo_sequence_active = False
-                run_log.write("[bold #ff5370]TODO sequence stopped[/] the failed item is blocked for review")
-        self._refresh_workboard()
-        self._refresh_tasks()
-        self._refresh_stats()
         if self._order_queue:
             self._start_next_order()
-        else:
-            self._ask_where_next(successful)
 
-    def _ask_question(self, options: list[dict[str, Any]]) -> None:
-        self._pending_choice = {"task_id": self.task_id, "options": [str(option["id"]) for option in options]}
-        self.task_state = "question"
-        run_log = self.query_one("#run-log", RichLog)
-        run_log.write("[bold yellow]? Here are the directions I see. Where do you want us to go?[/]")
-        run_log.write("[dim]Answer with numbers or ids; I won’t change anything until you choose.[/]")
-        for index, option in enumerate(options, start=1):
-            title = _short(str(option.get("title") or option["id"]), 40)
-            summary = _short(str(option.get("summary") or ""), 80)
-            recommendation = " [bold green]← my pick[/]" if option.get("selected_by_default") else ""
-            run_log.write(f"  [bold]\\[{index}][/] {escape(title)}{recommendation} [dim]{escape(summary)}[/]")
-        self.query_one("#goal-input", Input).focus()
-
-    def _ask_where_next(self, successful: bool) -> None:
-        if successful:
-            message = f"Where should we go next in {self.workspace}? Give me the next outcome."
-        else:
-            message = f"I’m still in {self.workspace}. Say retry, or tell me what direction to change."
-        self.query_one("#run-log", RichLog).write(f"[bold yellow]?[/] {escape(message)}")
-        self.narrator.record(message, task_id=self.task_id)
-        self.query_one("#goal-input", Input).focus()
+    @staticmethod
+    def _describe_success(task: dict[str, Any]) -> str:
+        changed = sorted(
+            {
+                path
+                for item in task.get("results") or []
+                if isinstance(item, dict)
+                for path in item.get("changed_paths") or []
+            }
+        )
+        checks = [c for c in task.get("check_results") or [] if isinstance(c, dict)]
+        parts = []
+        if changed:
+            parts.append("changed " + ", ".join(changed[:5]) + (f" (+{len(changed) - 5})" if len(changed) > 5 else ""))
+        if checks:
+            parts.append(f"{sum(1 for c in checks if c.get('status') == 'ok')}/{len(checks)} checks passed")
+        return ("Done — " + "; ".join(parts) if parts else "Done.") + " What now?"
 
     def _start_next_order(self) -> None:
         if not self._order_queue or self.task_state == "running" or self._engine_busy:
             return
         entry = self._order_queue.pop(0)
-        if isinstance(entry, str):  # legacy plain-text queue entries
-            entry = {"goal": entry, "mode": self.mode}
-        queued_workspace = str(entry.get("workspace") or "").strip()
-        if queued_workspace:
-            self._rebind_workspace(Intent(kind="chdir", argument=queued_workspace))
-        self.query_one("#run-log", RichLog).write(f"[dim]▶ next from queue ({len(self._order_queue)} left)[/]")
-        self._dispatch(str(entry["goal"]), str(entry.get("mode") or self.mode))
+        self.say(f"[dim]next from the queue ({len(self._order_queue)} left): {escape(_short(entry['goal'], 100))}[/]", "dim")
+        self._dispatch(entry["goal"], entry.get("mode") or self.mode)
+
+    # -- approvals and choices ----------------------------------------------------
+    def _approve_action(self, action: Any, reason: str) -> bool:
+        decision = Event()
+        pending = {"event": decision, "approved": False, "action": action, "reason": reason}
+        try:
+            self.call_from_thread(self._show_action_approval, pending)
+        except Exception:
+            return False
+        try:
+            from textual.worker import get_current_worker
+
+            worker = get_current_worker()
+        except Exception:
+            worker = None
+        while not decision.wait(0.1):
+            if worker is not None and worker.is_cancelled:
+                return False
+        return bool(pending.get("approved"))
+
+    def _show_action_approval(self, pending: dict[str, Any]) -> None:
+        self._pending_approval = pending
+        self.task_state = "approval"
+        action = pending.get("action")
+        data = action.model_dump(mode="json") if hasattr(action, "model_dump") else {}
+        target = str(data.get("path") or " ".join(data.get("argv") or []) or data.get("expected") or "this step")
+        reason = str(pending.get("reason") or "")
+        self.say(
+            f"[bold {_ASK}]? may I run[/] [bold]{escape(_short(target, 140))}[/]"
+            f"[dim] — {escape(_short(reason, 120))} · yes / no[/]",
+            "ask",
+        )
+        self.query_one("#composer", Composer).focus()
+
+    def _resolve_pending_approval(self, approved: bool) -> bool:
+        pending = self._pending_approval
+        if pending is None:
+            return False
+        pending["approved"] = approved
+        self._pending_approval = None
+        self.task_state = "running"
+        pending["event"].set()
+        return True
+
+    def _answer_approval(self, value: str) -> None:
+        choice = value.strip().casefold()
+        if choice in {"yes", "y", "approve", "allow", "ok", "go", "1"}:
+            self._resolve_pending_approval(True)
+        elif choice in {"no", "n", "deny", "decline", "stop", "2"}:
+            self._resolve_pending_approval(False)
+        else:
+            self.say("[dim]yes or no?[/]", "dim")
+
+    def _ask_question(self, options: list[dict[str, Any]]) -> None:
+        self._pending_choice = {"task_id": self.task_id, "options": [str(option["id"]) for option in options]}
+        self.task_state = "question"
+        lines = [f"[bold {_ASK}]? which way?[/] [dim]answer with a number[/]"]
+        for index, option in enumerate(options, start=1):
+            title = _short(str(option.get("title") or option["id"]), 60)
+            summary = _short(str(option.get("summary") or ""), 100)
+            pick = f" [{_OK}]← my pick[/]" if option.get("selected_by_default") else ""
+            lines.append(f"  [bold]{index}[/] {escape(title)}{pick} [dim]{escape(summary)}[/]")
+        self.say("\n".join(lines), "ask")
+        self.query_one("#composer", Composer).focus()
+
+    def _answer_question(self, value: str) -> None:
+        pending = self._pending_choice or {}
+        options: list[str] = pending.get("options", [])
+        selected: list[str] = []
+        for token in value.replace(",", " ").split():
+            if token.isdigit() and 1 <= int(token) <= len(options):
+                selected.append(options[int(token) - 1])
+            elif token in options:
+                selected.append(token)
+            else:
+                self.say(f"[dim]'{escape(token)}' isn't one of the options — use the numbers[/]", "dim")
+                return
+        self._pending_choice = None
+        self.task_state = "running"
+        self._run_resume(str(pending.get("task_id", "")), selected)
+
+    # -- lifecycle -------------------------------------------------------------
+    def action_new(self) -> None:
+        self._resolve_pending_approval(False)
+        if self.task_state == "running" or self._engine_busy:
+            self.action_cancel()
+        self._pending_choice = None
+        self._retry_task_id = None
+        self._order_queue.clear()
+        self._draft = ""
+        self.task_state = "idle"
+        self.say("[dim]fresh start[/]", "dim")
+
+    def action_cancel(self) -> None:
+        self._resolve_pending_approval(False)
+        workers = [worker for worker in self.workers if worker.group == "xander-task"]
+        for worker in workers:
+            worker.cancel()
+        if self._todo_sequence_active:
+            self._release_todo("todo")
+            self._todo_sequence_active = False
+        if workers or self._engine_busy or self.task_state == "running":
+            self._engine_busy = False
+            self.task_state = "needs-attention"
+            self.say("[dim]stopped — tell me what to change, or say retry[/]", "dim")
 
     def action_pause(self) -> None:
         workers = [worker for worker in self.workers if worker.group == "xander-task"]
@@ -2440,91 +963,65 @@ class XanderApp(App[None]):
             worker.cancel()
         if workers:
             self.task_state = "paused"
-            self._focus_thought = "The active work is paused by the operator."
-            self._focus_next = "Resume when you are ready to continue this run."
-            self._refresh_focus()
-            self.query_one("#run-log", RichLog).write(
-                "[yellow]paused by operator[/] [dim]— narration stops; the current engine step "
-                "winds down in the background before resume can start[/]"
-            )
+            self.say("[dim]paused — /resume continues[/]", "dim")
 
     def action_resume(self) -> None:
         if self.goal and self.task_state == "paused":
             self.task_state = "idle"
-            self.action_run()
+            self._dispatch(self.goal, self.mode)
         elif self._retry_task_id and self.task_state == "needs-attention":
-            task_id = self._retry_task_id
-            self._retry_task_id = None
+            task_id, self._retry_task_id = self._retry_task_id, None
             self.task_state = "running"
             self._run_resume(task_id, [])
 
-    def action_tests(self) -> None:
-        self._show_view("evidence-view")
+    def _show_history(self) -> None:
+        missions = MissionStore().list(self.workspace, limit=12)
+        if not missions:
+            self.say("[dim]no missions here yet[/]", "dim")
+            return
+        lines = ["[bold]recent missions[/] [dim]/show <id> for one[/]"]
+        for mission in missions:
+            lines.append(f"  [dim]{escape(mission.id)}[/] {escape(mission.status)} · {escape(_short(mission.goal, 80))}")
+        self.say("\n".join(lines), "dim")
 
-    def action_history(self) -> None:
-        self._refresh_tasks()
-        self._show_view("history-view")
-        focus = self.query_one("#mission-library", Select).focus
-        focus()
-        self.call_after_refresh(focus)
+    def _show_evidence(self, mission_id: str) -> None:
+        mission_id = mission_id.strip() or self.task_id
+        if not mission_id or mission_id == "new":
+            self.say("[dim]/show <mission id> · /history lists them[/]", "dim")
+            return
+        try:
+            mission = MissionStore().load(self.workspace, mission_id)
+        except Exception as exc:
+            self.say(f"[{_BAD}]{escape(str(exc))}[/]", "bad")
+            return
+        self.say("\n".join(escape(line) for line in mission.summary_lines()), "dim")
 
-    def action_soul(self) -> None:
-        self._refresh_stats()
-        self._show_view("system-view")
-
-    def action_desktop(self) -> None:
-        self._show_view("activity-view")
-        self.query_one("#run-log", RichLog).write("[bold #89ddff]desktop[/] explicit observation requested")
-        self._capture_desktop()
-
-    @work(thread=True, exclusive=True, group="xander-desktop")
     def _capture_desktop(self) -> None:
         try:
             from .desktop import capture_desktop
 
             path = capture_desktop()
-            message = f"[bold #c3e88d]desktop snapshot saved[/] {escape(str(path))}"
+            self.say(f"[dim]screenshot saved: {escape(str(path))}[/]", "dim")
         except Exception as exc:
-            message = f"[yellow]desktop snapshot unavailable:[/] {escape(str(exc))}"
-        self.call_from_thread(self._write_desktop_message, message)
-
-    def _write_desktop_message(self, message: str) -> None:
-        self.query_one("#run-log", RichLog).write(message)
+            self.say(f"[{_BAD}]no screenshot: {escape(str(exc))}[/]", "bad")
 
     def _poll_power(self) -> None:
-        if self._power_guard.tripped:
+        try:
+            status = self._power_guard.poll()
+        except Exception:
             return
-        status = self._power_guard.reader()
         self._power_status = status
-        self._refresh_focus()
-        if status.capacity == 0:
+        if self._power_guard.tripped and self.task_state != "power-zero":
             self.action_cancel()
             self.task_state = "power-zero"
-            self._focus_thought = "Power reached 0%; Xander stopped to protect the machine."
-            self._focus_next = "Reconnect power before starting more work."
-            self._refresh_focus()
-            self.query_one("#goal-input", Input).disabled = True
-            self._power_guard.trip(status)
-            self.query_one("#run-log", RichLog).write(
-                "[bold #ff5370]POWER ZERO[/] Xander stopped; the PC shutdown request has been sent."
-            )
+            self.say(f"[{_BAD}]power is at zero — stopping everything[/]", "bad")
+        if self.is_mounted:
+            self._refresh_status()
 
-    @work(thread=True, exclusive=True, group="xander-power")
     def _shutdown_power(self) -> None:
         from .power import request_poweroff
 
         request_poweroff()
-
-    def action_help(self) -> None:
-        self.notify(
-            escape(
-                "Alt works while you type.  "
-                "⌥1-5 or ⌥A activity ⌥C controls ⌥E evidence ⌥H history ⌥X Xander  ·  "
-                "⌥B rail  ⌥O pinned  ⌥K clear  ⌥L composer  ·  "
-                "⌥N new  ⌥P pause  ⌥R resume  ⌥S stop  ⌥Q quit"
-            ),
-            title="Keys",
-        )
 
 
 def run_tui(

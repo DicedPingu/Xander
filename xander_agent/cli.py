@@ -297,6 +297,7 @@ def invoke_engine(
     event_sink: Callable[[Any], None] | None = None,
     approve: Callable[[Any, str], bool] | None = None,
     log_events: bool = True,
+    steering: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Call the core through its public interface without importing it eagerly."""
 
@@ -307,6 +308,7 @@ def invoke_engine(
         event_sink=event_sink,
         approve=approve,
         log_events=log_events,
+        steering=steering,
     )
     if mode == "resume":
         if not task_id:

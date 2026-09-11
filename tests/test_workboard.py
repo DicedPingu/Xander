@@ -74,14 +74,12 @@ def test_todo_sequence_runs_one_item_at_a_time_and_records_lessons(tmp_path: Pat
 
     async def scenario() -> None:
         app = XanderApp(workspace=tmp_path)
-        async with app.run_test(size=(120, 48)) as pilot:
+        async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
             app._run_goal = lambda goal, mode: calls.append(goal)
-            field = app.query_one("#todo-input", Input)
             for value in ("first step", "second step"):
-                field.value = value
-                app._add_todo()
-            app._run_todo_sequence()
+                app.handle_line(f"/todo {value}")
+            app.handle_line("/todo run")
             assert calls == ["first step"]
             assert [item.state for item in app._workboard.todos] == ["active", "todo"]
 
@@ -97,28 +95,22 @@ def test_todo_sequence_runs_one_item_at_a_time_and_records_lessons(tmp_path: Pat
     asyncio.run(scenario())
 
 
-def test_contest_shortcut_stops_work_and_leaves_todo_pending(tmp_path: Path, monkeypatch) -> None:
+def test_stop_leaves_the_active_todo_pending(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XANDER_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("XANDER_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("XANDER_CACHE_DIR", str(tmp_path / "cache"))
 
     async def scenario() -> None:
         app = XanderApp(workspace=tmp_path)
-        async with app.run_test(size=(120, 48)) as pilot:
+        async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
-            field = app.query_one("#todo-input", Input)
-            field.value = "challenge the new logic"
-            app._add_todo()
+            app.handle_line("/todo challenge the new logic")
             app._run_goal = lambda goal, mode: None
-            app._run_todo_sequence()
+            app.handle_line("/todo run")
             app._engine_busy = True
-            app.action_contest()
+            app.handle_line("/stop")
             assert app.task_state == "needs-attention"
             assert app._todo_sequence_active is False
             assert app._workboard.todos[0].state == "todo"
-            contest = app.query_one("#contest-input", Input)
-            contest.value = "keep the old route until the new check passes"
-            app._record_contest_comment()
-            assert app._workboard.contest_comments == ["keep the old route until the new check passes"]
 
     asyncio.run(scenario())
