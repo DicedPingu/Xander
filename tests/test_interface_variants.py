@@ -80,8 +80,10 @@ def test_model_routing_only_accepts_abliterated_builds(tmp_path: Path, monkeypat
     _xdg(monkeypatch, tmp_path)
     from xander_agent.variants import VariantProfile
 
-    profile = VariantProfile(name="allowed")  # defaults are abliterated builds
-    assert all("abliterat" in model for model in profile.model_routing.values())
+    from xander_agent.calibers import is_abliterated
+
+    profile = VariantProfile(name="allowed")  # defaults are heretic builds
+    assert all(is_abliterated(model) for model in profile.model_routing.values())
 
     with pytest.raises(ValueError, match="abliterated"):
         VariantProfile(name="blocked", model_routing={"coder": "qwen2.5-coder:7b"})

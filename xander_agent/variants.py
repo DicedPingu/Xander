@@ -80,14 +80,17 @@ class VariantProfile(BaseModel):
         """Operator policy: local routes only to abliterated model builds.
         ``anthropic/``-prefixed entries are cloud models and exempt."""
 
+        from .calibers import is_abliterated
+
         rejected = [
             model
             for model in value.values()
-            if not model.casefold().startswith("anthropic/") and "abliterat" not in model.casefold()
+            if not model.casefold().startswith("anthropic/") and not is_abliterated(model)
         ]
         if rejected:
             raise ValueError(
-                "local model routing only accepts abliterated builds; rejected: " + ", ".join(sorted(set(rejected)))
+                "local model routing only accepts abliterated or heretic builds; rejected: "
+                + ", ".join(sorted(set(rejected)))
             )
         return value
 

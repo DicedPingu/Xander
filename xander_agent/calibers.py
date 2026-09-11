@@ -39,15 +39,19 @@ class Caliber:
     kind: str = "chat"
 
 
+# One resident model. The card holds one ~6.5 GB build at a time and every
+# swap between builds is a 10-20 s stall that reads as a freeze, so every
+# chat role fires the same heretic build: Qwen3.5-based, tools + vision +
+# thinking, 32k context baked into its Modelfile. The alternatives below are
+# installed and catalogued for benchmarking, never swapped in mid-mission.
+MAIN_MODEL = "qwenpaw-9b-heretic:latest"
+ALTERNATIVE_MODELS: tuple[str, ...] = ("qwen3.8-9b-heretic:latest", "gemma4-e4b-heretic:latest")
+
 CALIBERS: tuple[Caliber, ...] = (
-    Caliber("coder", "huihui_ai/qwen2.5-coder-abliterate:7b", "precise edits, command synthesis"),
-    Caliber("planner", "huihui_ai/qwen3-abliterated:8b", "analysis, planning, replanning"),
-    Caliber(
-        "classifier",
-        "huihui_ai/qwen2.5-vl-abliterated:3b-instruct-q8_0",
-        "cheap routing: intent detection, commentary, quick judgments",
-    ),
-    Caliber("critic", "huihui_ai/qwen3-abliterated:8b", "the squad's judgment seat"),
+    Caliber("coder", MAIN_MODEL, "precise edits, command synthesis"),
+    Caliber("planner", MAIN_MODEL, "analysis, planning, replanning"),
+    Caliber("classifier", MAIN_MODEL, "routing: intent detection, commentary, quick judgments"),
+    Caliber("critic", MAIN_MODEL, "the squad's judgment seat"),
     Caliber(
         "embedder",
         "qwen3-embedding:0.6b",
@@ -99,8 +103,15 @@ def is_cloud(model: str) -> bool:
     return model.casefold().startswith(CLOUD_PREFIX)
 
 
+#: Builds with refusal training removed at the weights: abliterated (huihui)
+#: or heretic (p-e-w/heretic directional ablation). Both satisfy the operator's
+#: local-model policy; a plain vendor build does not.
+_UNCENSORED_MARKS = ("abliterat", "heretic", "uncensored")
+
+
 def is_abliterated(model: str) -> bool:
-    return "abliterat" in model.casefold()
+    lowered = model.casefold()
+    return any(mark in lowered for mark in _UNCENSORED_MARKS)
 
 
 def family(model: str) -> str:
@@ -201,6 +212,11 @@ def ordered_models(role: str, installed, routing: dict[str, str] | None = None) 
             ordered.append(resolved)
     if not ordered:
         ordered.append(resolve(role, installed, table))
+    # The catalogued alternatives come last: an installed heretic build beats
+    # an error when the main build is missing.
+    for alternative in ALTERNATIVE_MODELS:
+        if alternative in set(installed) and alternative not in ordered:
+            ordered.append(alternative)
     present = [model for model in ordered if is_cloud(model) or model in set(installed)]
     return present or ordered
 

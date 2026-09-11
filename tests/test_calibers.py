@@ -12,6 +12,9 @@ from xander_agent.calibers import (
 )
 
 INSTALLED = [
+    "qwenpaw-9b-heretic:latest",
+    "qwen3.8-9b-heretic:latest",
+    "gemma4-e4b-heretic:latest",
     "huihui_ai/qwen2.5-coder-abliterate:7b",
     "huihui_ai/qwen2.5-vl-abliterated:3b",
     "huihui_ai/qwen2.5-vl-abliterated:3b-instruct-q8_0",
@@ -74,11 +77,26 @@ def test_shipped_routing_is_already_the_best_installed_build() -> None:
     assert upgrades(DEFAULT_MODELS, INSTALLED) == {}
 
 
+def test_every_chat_role_shares_one_resident_model() -> None:
+    """One ~6.5 GB build fits the card; a second one evicts it. No role may
+    route to a different build than the rest."""
+
+    assert len(set(DEFAULT_MODELS.values())) == 1
+    assert "heretic" in DEFAULT_MODELS["coder"]
+
+
 def test_role_order_falls_back_when_the_preferred_model_is_absent() -> None:
-    without_classifier = [m for m in INSTALLED if "vl-abliterated" not in m]
-    order = ordered_models("classifier", without_classifier)
-    assert order[0] == "huihui_ai/qwen2.5-coder-abliterate:7b"
-    assert all(model in without_classifier for model in order)
+    without_main = [m for m in INSTALLED if "qwenpaw" not in m]
+    order = ordered_models("classifier", without_main)
+    assert order and all(model in without_main for model in order)
+
+
+def test_heretic_and_abliterated_builds_both_pass_the_local_policy() -> None:
+    from xander_agent.calibers import is_abliterated
+
+    assert is_abliterated("qwenpaw-9b-heretic:latest")
+    assert is_abliterated("huihui_ai/qwen3-abliterated:8b")
+    assert not is_abliterated("qwen3.5:9b")
 
 
 def test_nothing_installed_still_yields_a_model_to_attempt() -> None:
