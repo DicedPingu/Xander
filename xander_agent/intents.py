@@ -165,11 +165,28 @@ class Intent:
 
 
 _CD_COMMAND = re.compile(r"^\s*/?cd\s+(?P<path>\S.*?)\s*$", re.IGNORECASE)
+# Only a direct "change/set the workspace to X" is a workspace change. The
+# older, looser shape ("move … folder … into …") also matched "move the
+# files in the current folder into subfolders" and tried to cd into
+# "subfolders" — a real order mis-read as navigation.
 _CD_PHRASE = re.compile(
-    r"\b(?:change|switch|set|move|rebind|point)\b.{0,60}?"
-    r"\b(?:work(?:ing)?\s*(?:folder|dir(?:ectory)?)|workspace|selected\s+folder|current\s+folder)\b"
-    r".{0,60}?\b(?:to|into|at)\b\s*(?P<path>.+?)[.!\s]*$",
+    r"^\s*(?:(?:please|xander|ok(?:ay)?|now),?\s+)*"
+    r"(?:change|switch|set|rebind|point|open)\s+(?:the\s+|my\s+|your\s+)?"
+    r"(?:work(?:ing)?\s*(?:folder|dir(?:ectory)?)|workspace|selected\s+folder|current\s+folder|project\s+folder)"
+    r"\s+(?:to|into|at)\s+(?P<path>\S.*?)[.!\s]*$",
     re.IGNORECASE | re.DOTALL,
+)
+# Venting, complaints, and remarks about Xander himself are conversation,
+# never a script to write. "Quick fucking asking so much" became a Python
+# file that printed the sentence; it should have been a reply.
+_VENT = re.compile(
+    r"^\s*(?:(?:quick|please|just|ffs|omg|ugh|wtf|jesus|god|man|dude),?\s+)*"
+    r"(?:stop|quit|enough|why\s+(?:do|are|did)\s+you|you\s+(?:are|keep|always|never)|"
+    r"that(?:'s| is| was)\s+(?:not|wrong|stupid|dumb|useless|bad)|"
+    r"(?:this|that)\s+(?:is|was)\s+(?:not\s+)?what\s+i|no[,.!]|nope|wrong|"
+    r"fucking|fuck|shit|damn|bullshit|retard|idiot|stupid|dumb|useless|"
+    r"asking\s+(?:so\s+much|too\s+much|too\s+many))\b",
+    re.IGNORECASE,
 )
 _CALLED = re.compile(r"\b(?:called|named)\s+[\"'`]?(?P<name>[\w.\\/-]+)", re.IGNORECASE)
 _CREATE_HINT = re.compile(r"\b(?:called|named|new|create|make)\b", re.IGNORECASE)
@@ -241,7 +258,9 @@ _AUTHORIZING_LEAD = re.compile(
     r"generate|migrate|wire|update|change|set\s+up|setup|scaffold|patch|apply|convert|port|deploy|"
     r"test|replace|move|extract|split|merge|bump|upgrade|configure|enable|disable|turn|"
     r"execute|start\s+(?:working|building|implementing)|go\s+ahead|proceed|ship|finish|complete|"
-    r"clean\s+up|optimi[sz]e|rewrite|reorganize|restructure|document|translate|render|compile)\b",
+    r"clean\s+up|optimi[sz]e|rewrite|reorgani[sz]e|restructure|document|translate|render|compile|"
+    r"group|sort|organi[sz]e|tidy|arrange|watch|monitor|browse|navigate|visit|open|copy|download|"
+    r"clone|touch|mkdir|put|save|print|echo|count|search|find|look\s+up|go\s+to|log\s+in|sign\s+in)\b",
     re.IGNORECASE,
 )
 
@@ -307,6 +326,8 @@ def parse_intent(text: str) -> Intent:
     mutation = bool(_MUTATION_ORDER.search(stripped))
     if _FEEDBACK_LEAD.match(stripped) and not mutation:
         return Intent(kind="feedback", argument=stripped)
+    if _VENT.search(stripped) and not mutation and not _AUTHORIZING_LEAD.match(stripped):
+        return Intent(kind="advice", argument=stripped, reason="this reads as a remark to me, so I answer it")
     if _SELF_WORK.search(stripped):
         return Intent(kind="selfwork", argument=stripped, authorized=True)
     if _EXPLORATORY_LEAD.match(stripped) and not mutation:

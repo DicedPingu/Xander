@@ -36,6 +36,7 @@ from .models import (
     utc_now,
 )
 from .policy import classify_risk, is_setup_action, neutral_intent_contract, snapshot_workspace
+from .quick import QuickOrder, parse_quick_order
 from .readiness import ToolReadiness, assess
 from .research import Researcher
 from .skills import SkillRegistry
@@ -252,6 +253,10 @@ class Engine:
 
     def _run(self, task: TaskRecord, resume: bool = False) -> TaskRecord:
         task.status = TaskStatus.RUNNING
+        if task.request.mode == "implement" and task.snapshot is None and not resume:
+            quick = parse_quick_order(task.request.goal, self.workspace)
+            if quick is not None:
+                return self._run_quick(task, quick)
         form = choose_form(task.request.mode, task.request.goal)
         self._voice = Commentator(
             backend=self.backend,
@@ -608,6 +613,16 @@ class Engine:
                         self.task_store.save(task)
                         continue
             else:
+                if task.request.mode == "implement" and not task.request.acceptance_checks:
+                    synthesized = self._synthesize_checks(task.plan)
+                    if synthesized:
+                        self._emit(
+                            task,
+                            "plan",
+                            "proof derived from the plan itself: " + ", ".join(check.name for check in synthesized),
+                            {"checks": [check.model_dump(mode="json") for check in synthesized]},
+                        )
+                        self.task_store.save(task)
                 lint_failure = self._lint_plan(
                     task.plan,
                     require_execution=task.request.mode == "implement",
@@ -885,6 +900,74 @@ class Engine:
                     }
                 )
         return lesson
+
+    def _run_quick(self, task: TaskRecord, quick: QuickOrder) -> TaskRecord:
+        """Do one small order directly: no research, roster, planner, or judge.
+
+        Policy still applies — the executor asks for approval exactly when it
+        would for any other action — but a one-line order gets a one-line
+        answer: "I created done.txt. What now?"
+        """
+
+        task.snapshot = snapshot_workspace(self.workspace)
+        task.subject = quick.kind.replace("_", " ")
+        task.guide = MissionGuide(
+            statement=task.request.goal,
+            todo=[GuideStep(id=f"action-{action.id}", text=action.expected) for action in quick.actions],
+            current="Small order; doing it directly.",
+            progress=f"0/{len(quick.actions)} complete",
+        )
+        task.plan = ModelPlan(summary=quick.reply, decision="small order, done directly", actions=list(quick.actions))
+        task.evidence.append({"kind": "quick", "order": quick.kind, "paths": quick.paths})
+        task.phase = Phase.WORK
+        self.task_store.save(task)
+
+        for action in quick.actions:
+            if action.kind == ActionKind.CREATE and (self.workspace / action.path).exists():
+                reply = f"{action.path} already exists here, so I left it alone. What now?"
+                task.status = TaskStatus.COMPLETED
+                task.evidence.append({"kind": "result", "verified": True, "scope": "quick", "text": reply})
+                self.task_store.save(task)
+                self._emit(task, "result", reply, {"answer": reply, "quick": True, **self._result_payload(task)})
+                return task
+
+        executor = ActionExecutor(
+            self.workspace,
+            task.snapshot,
+            autonomy=task.request.autonomy,
+            allowed_paths=task.request.allowed_paths,
+            approve=self._approve(task),
+            default_timeout=task.request.timeout,
+        )
+        failure = ""
+        for action in quick.actions:
+            self._emit(task, "action", f"{action.kind}: {action.expected}", {"action": action.model_dump(mode="json")})
+            result = executor.run(action)
+            task.results.append(result)
+            event_type = "patch" if action.kind == ActionKind.CREATE else "action"
+            self._emit(
+                task,
+                event_type,
+                result.status,
+                {"result": result.model_dump(mode="json"), "wrote": self._remember_written(result)},
+            )
+            if result.status != ActionStatus.OK:
+                failure = result.reason or result.stderr.strip() or f"{action.expected}: {result.status}"
+                break
+
+        if failure:
+            task.status = TaskStatus.UNVERIFIED
+            task.failure = failure[:2_000]
+            reply = f"I couldn't do that: {failure}"
+            self.task_store.save(task)
+            self._emit(task, "result", reply, {"answer": reply, "quick": True, **self._result_payload(task)})
+            return task
+
+        task.status = TaskStatus.COMPLETED
+        task.evidence.append({"kind": "result", "verified": True, "scope": "quick", "text": quick.reply})
+        self.task_store.save(task)
+        self._emit(task, "result", quick.reply, {"answer": quick.reply, "quick": True, **self._result_payload(task)})
+        return task
 
     def _answer(self, task: TaskRecord) -> TaskRecord:
         """Answer mode: research happened; reply in prose, change nothing."""
@@ -1233,6 +1316,47 @@ Rules:
                 namespace=self.profile.memory_namespace or self.variant,
             )
         return self.skills.load_selected(goal, limit=max(4, complexity * 2), max_chars=context_budget)
+
+    @staticmethod
+    def _synthesize_checks(plan: ModelPlan | None) -> list[AcceptanceCheck]:
+        """Derive proof from a plan that forgot to state any.
+
+        A small model reliably produces the change and unreliably produces
+        the ``acceptance_checks`` array; rejecting the whole plan three times
+        for that omission was the "same wall" loop. Files the plan creates
+        or patches must exist afterwards, Python files must compile, and a
+        command-only plan is proven by its own exit codes. The synthesized
+        checks are appended to the plan so the judge and the log see them.
+        """
+
+        if plan is None or not plan.actions:
+            return []
+        if any(check.required for check in plan.acceptance_checks):
+            return []
+        checks: list[AcceptanceCheck] = []
+        seen: set[str] = set()
+        for action in plan.actions:
+            paths: list[str] = []
+            if action.kind == ActionKind.CREATE and action.path:
+                paths = [action.path]
+            elif action.kind == ActionKind.PATCH:
+                for line in action.patch.splitlines():
+                    if line.startswith("+++ ") and not line.startswith("+++ /dev/null"):
+                        token = line[4:].split("\t", 1)[0]
+                        paths.append(token[2:] if token.startswith("b/") else token)
+            for path in paths:
+                if path in seen:
+                    continue
+                seen.add(path)
+                checks.append(AcceptanceCheck(name=f"exists: {path}", argv=["test", "-e", path]))
+                if path.endswith(".py"):
+                    checks.append(AcceptanceCheck(name=f"compiles: {path}", argv=["python3", "-m", "py_compile", path]))
+        if not checks and any(
+            action.kind in {ActionKind.COMMAND, ActionKind.PIPELINE} for action in plan.actions
+        ):
+            checks.append(AcceptanceCheck(name="actions exited cleanly", argv=["true"]))
+        plan.acceptance_checks = [*plan.acceptance_checks, *checks]
+        return checks
 
     @staticmethod
     def _is_discovery_plan(plan: ModelPlan | None) -> bool:
@@ -1768,6 +1892,11 @@ Rules:
         # nothing or gave an admitted stub. A short body it wrote on purpose --
         # a marker file, a tiny config -- is its decision and is left alone.
         if existing.strip() and not self._PLACEHOLDER.search(existing):
+            return ""
+        # An order for an empty file means empty. Never invent a body for it.
+        if not existing.strip() and re.search(
+            r"\b(?:empty|blank|marker|placeholder)\b", f"{action.expected} {task.request.goal}", re.IGNORECASE
+        ):
             return ""
 
         current = (

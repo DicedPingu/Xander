@@ -566,6 +566,50 @@ def validate_allowed_paths(paths: list[Path], workspace: Path, allowed: list[str
             raise ValueError(f"path is outside request allowlist: {path}")
 
 
+def _operand_paths(argv: list[str]) -> list[str]:
+    """Non-flag operands of a filesystem command (`touch a.txt` -> ["a.txt"])."""
+    operands: list[str] = []
+    for token in argv[1:]:
+        if token == "--":
+            continue
+        if token.startswith("-") and len(token) > 1:
+            continue
+        operands.append(token)
+    return operands
+
+
+def _contained_filesystem_mutation(argv: list[str], workspace: Path) -> bool:
+    """True when argv is a plain file mutation whose every operand stays inside
+    the workspace or inside Xander's own tree. Those are ordinary work, not
+    privileged actions, and must not ask the supervisor for permission."""
+    effective = argv
+    while effective and Path(effective[0]).name in COMMAND_WRAPPERS:
+        effective = _wrapped_argv(effective)
+    if not effective or Path(effective[0]).name not in FILESYSTEM_MUTATORS:
+        return False
+    if Path(effective[0]).name in {"chown", "install"}:
+        return False
+    operands = _operand_paths(effective)
+    if not operands:
+        return False
+    from .paths import agent_dir
+
+    workspace = workspace.expanduser().resolve(strict=False)
+    homes = [workspace]
+    try:
+        homes.append(agent_dir().resolve())
+    except OSError:
+        pass
+    for operand in operands:
+        candidate = Path(operand).expanduser()
+        resolved = (candidate if candidate.is_absolute() else workspace / candidate).resolve(strict=False)
+        if contains_secret_path(resolved):
+            return False
+        if not any(resolved == home or home in resolved.parents for home in homes):
+            return False
+    return True
+
+
 def approval_reason(
     action: Action,
     workspace: Path,
@@ -574,6 +618,14 @@ def approval_reason(
     allowed_paths: list[str],
 ) -> str | None:
     risk = classify_risk(action)
+    if risk == Risk.HIGH and action.kind in {ActionKind.COMMAND, ActionKind.PIPELINE}:
+        contained = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
+        if all(
+            _contained_filesystem_mutation(argv, workspace) or _argv_risk(argv) != Risk.HIGH
+            for argv in contained
+            if argv
+        ) and action.risk != Risk.HIGH:
+            risk = Risk.MEDIUM
     paths = changed_paths(action, workspace)
     commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
     for command in commands:
