@@ -3,11 +3,11 @@
 - [ ] Arena: fizzbuzz / hidden-browser / watch-folder must pass on the chosen model. Then add
       scenarios for: patching an existing file, a multi-file project, reading a URL and summarizing,
       clicking in the operator's Chrome (bridge), self-improvement round trip.
-- [ ] Decide the main model from the arena numbers: qwenpaw-9b-heretic vs qwen3.5-9b-ultra-heretic
-      (4/100 refusals). Pull Qwythos-9B when HF stops rate-limiting and add it to the comparison.
-- [ ] XanderWorld: `/new-project <name>` creates `SPQR/XanderWorld/NNN - name/` with a `.folder`,
-      binds the workspace there, and stores the goal.
-- [ ] Write a `.folder` into every project he works in (once per workspace, merged, never clobbered).
+- [ ] Model: qwenpaw-9b-heretic stays main. qwen3.5-9b-ultra-heretic (4/100 refusals) is installed but
+      returns plans with ZERO actions under the JSON schema (0/4 arena, 2/3 probe runs) — unusable as
+      planner until the plan schema is simplified for it. Pull Qwythos-9B (11/100, KL 0.012, tool-tuned)
+      when HF stops rate-limiting (429) and benchmark it: `xander --variant <name> arena`.
+- [ ] Planner output: bound the `why`/`summary` fields (the model rambles 15k chars and truncates the JSON).
 - [ ] A compact machine map of any project (not human-readable) he can load instead of the code.
 - [ ] Deliver the first practical missions in `.xander` (GitHub profile, Codewars kata, Android app).
 - [ ] Bounded URL/repo crawling with provenance (research-2026-09-10.md §2) and a browser tool (§3).
@@ -17,6 +17,7 @@
 - [ ] Log everything relevant, once; keep the plain log twin readable.
 
 DONE
+- 2026-09-12  /new-project → SPQR/XanderWorld/NNN - name/ with a .folder; every finished mission leaves a .folder
 - 2026-09-12  one feed, one composer, no tabs; copy with ctrl+c; ↑↓ history; mid-run messages reach him
 - 2026-09-12  small orders run directly; workspace writes need no approval; venting is conversation
 - 2026-09-12  arena: `xander arena` runs written orders in throwaway folders with a model judge

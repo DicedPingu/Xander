@@ -616,7 +616,7 @@ class Engine:
                 for repaired in self._fill_argv(task, task.plan):
                     self._emit(task, "plan", repaired, {})
                 if task.request.mode == "implement" and not task.request.acceptance_checks:
-                    synthesized = self._synthesize_checks(task.plan)
+                    synthesized = self._synthesize_checks(task.plan, task.request.goal)
                     if synthesized:
                         self._emit(
                             task,
@@ -1141,6 +1141,9 @@ Rules:
   "your own browser" means a headless fetch with urllib or curl, never the operator's browser.
 - A command that needs logic (loops, timing, parsing) is a small script: CREATE it, then a command action
   runs it as ["python3","name.py"]. Never squeeze a program into a single command line.
+- Creating a script is not the goal; its result is. If the goal names an output (seen.txt, title.txt, a
+  running program), the plan ends with the step that produces it, and the proof checks that output.
+- Scripts run unattended: never input(), never prompt, never wait for a key. Paths are known; hardcode them.
 - `decision` names the single next move you chose, in one plain sentence the operator can read.
 - `why` says what evidence made that the best move over the alternative you rejected. Cite the local
   evidence, prior failure, or check that decided it; never restate the goal back as the reason.
@@ -1327,8 +1330,19 @@ Rules:
             )
         return self.skills.load_selected(goal, limit=max(4, complexity * 2), max_chars=context_budget)
 
+    _NAMED_OUTPUT = re.compile(
+        r"\b(?:to|into|in|as|called|named)\s+[\"'`]?(?P<file>[\w][\w.-]*\.(?:txt|md|json|csv|py|html|log|yaml|yml|toml))\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _goal_outputs(cls, goal: str) -> list[str]:
+        """Files the sentence itself promises: "write … to seen.txt" must leave seen.txt."""
+
+        return list(dict.fromkeys(m.group("file") for m in cls._NAMED_OUTPUT.finditer(goal)))
+
     @staticmethod
-    def _synthesize_checks(plan: ModelPlan | None) -> list[AcceptanceCheck]:
+    def _synthesize_checks(plan: ModelPlan | None, goal: str = "") -> list[AcceptanceCheck]:
         """Derive proof from a plan that forgot to state any.
 
         A small model reliably produces the change and unreliably produces
@@ -1341,10 +1355,16 @@ Rules:
 
         if plan is None or not plan.actions:
             return []
-        if any(check.required for check in plan.acceptance_checks):
-            return []
         checks: list[AcceptanceCheck] = []
-        seen: set[str] = set()
+        seen: set[str] = {check.name for check in plan.acceptance_checks}
+        for name in Engine._goal_outputs(goal):
+            label = f"exists: {name}"
+            if label not in seen:
+                seen.add(label)
+                checks.append(AcceptanceCheck(name=label, argv=["test", "-e", name]))
+        if any(check.required for check in plan.acceptance_checks):
+            plan.acceptance_checks = [*plan.acceptance_checks, *checks]
+            return checks
         for action in plan.actions:
             paths: list[str] = []
             if action.kind == ActionKind.CREATE and action.path:
@@ -1900,7 +1920,8 @@ Rules:
                 continue
             wish = " ".join(f"{action.expected} {action.path}".split())
             if not wish:
-                continue
+                # A bare step: the plan's own decision, then the goal, say what it is for.
+                wish = " ".join((plan.decision or plan.summary or task.request.goal).split())[:300]
             argv = self._deterministic_argv(wish)
             if argv:
                 action.argv = argv

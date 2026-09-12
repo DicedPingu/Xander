@@ -19,8 +19,9 @@
   - Root prototype (agent.py … toolbelt.py) moved to _attic/. Xander.MD → .xander (rewritten).
     .folder, .todo, .changes added. Monica/config.py → same heretic model. Six huihui_ai models
     removed from Ollama; qwen3.5-9b-ultra-heretic pulled for comparison.
-  Proven by: tests/ 348 passed; arena one-liners 4/4 (judge 10/10); hard scenarios 2/5 → being fixed
-  (see state/arena/*.json); TUI screenshot reviewed.
+  Proven by: tests/ 365 passed; arena one-liners 4/4 (judge 10/10); hard scenarios: fizzbuzz, group-by-type,
+  venting pass on qwenpaw (not all in one run — 9B variance); hidden-browser and watch-folder still open.
+  qwen3.5-9b-ultra-heretic benchmarked 0/4 (empty action arrays) — not adopted. TUI screenshot reviewed.
 
 2026-09-11 · Claude Opus 5 (Claude Code) · de68540
   - Discussion-first routing, composer commands, stored goals/TODOs, drafts (intents.py, tui.py).
