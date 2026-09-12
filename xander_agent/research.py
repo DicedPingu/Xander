@@ -106,6 +106,10 @@ class Researcher:
     def gather(self, goal: str, subject: str = "") -> ResearchBundle:
         query = f"{subject} {goal}".strip()
         local = self._local_context()
+        software = self._software_context(goal)
+        if software:
+            # First, so it survives the planner's 4 000-character window.
+            local = software + "\n\n" + local
         tools = self._relevant_tools(query)
         skills = [
             {key: value for key, value in record.items() if key in {"name", "description", "category", "bucket", "path", "score"}}
@@ -134,6 +138,70 @@ class Researcher:
             sources=list(dict.fromkeys(sources)),
             warnings=warnings,
         )
+
+    _SOFTWARE_VERB = re.compile(
+        r"\b(?:purge|uninstall|remove|delete|install|reinstall|upgrade|update|downgrade|disable|enable|"
+        r"is\s+\w+\s+installed|version\s+of)\b",
+        re.IGNORECASE,
+    )
+    _SOFTWARE_STOP = {
+        "the", "and", "this", "that", "from", "with", "into", "then", "please", "xander", "purge", "remove",
+        "install", "uninstall", "delete", "package", "packages", "program", "tool", "app", "again", "completely",
+        "fully", "clean", "cleanly", "system", "machine", "laptop", "computer", "also", "reinstall", "upgrade",
+        "update", "version", "installed", "everything", "files", "config", "configuration", "leftover", "leftovers",
+    }
+
+    def _software_context(self, goal: str) -> str:
+        """How the software an order names is actually installed.
+
+        "Purge stegosuite" planned around a script that never existed because
+        nothing told the planner the thing is a dpkg package at /usr/bin.
+        For each plausible name in an install/remove order: the binary's
+        path, the dpkg record, the snap, the pip distribution, the flatpak.
+        Bounded, offline, and skipped for orders that are not about software.
+        """
+
+        if not self._SOFTWARE_VERB.search(goal):
+            return ""
+        names = []
+        for word in re.findall(r"[A-Za-z][A-Za-z0-9_.+-]{2,}", goal):
+            lowered = word.casefold()
+            if lowered in self._SOFTWARE_STOP or lowered in names:
+                continue
+            names.append(lowered)
+        lines: list[str] = []
+        for name in names[:6]:
+            found: list[str] = []
+            binary = shutil.which(name)
+            if binary:
+                found.append(f"binary at {binary}")
+            if shutil.which("dpkg-query"):
+                dpkg = _run(["dpkg-query", "-W", "-f=${Package} ${Version} [${Status}]", name], self.workspace, timeout=10)
+                if dpkg.returncode == 0 and dpkg.stdout.strip():
+                    found.append(f"dpkg package: {dpkg.stdout.strip()} → remove with apt-get purge -y {name}")
+            if shutil.which("snap"):
+                snap = _run(["snap", "list", name], self.workspace, timeout=10)
+                if snap.returncode == 0 and name in snap.stdout:
+                    found.append(f"snap: {snap.stdout.strip().splitlines()[-1]} → remove with snap remove {name}")
+            if shutil.which("flatpak"):
+                flat = _run(["flatpak", "list", "--app", "--columns=application"], self.workspace, timeout=10)
+                if flat.returncode == 0:
+                    apps = [line.strip() for line in flat.stdout.splitlines() if name in line.casefold()]
+                    if apps:
+                        found.append(f"flatpak: {apps[0]} → remove with flatpak uninstall -y {apps[0]}")
+            for pip in ("pipx", "pip"):
+                if not shutil.which(pip):
+                    continue
+                argv = [pip, "list"] if pip == "pipx" else [pip, "show", name]
+                show = _run(argv, self.workspace, timeout=15)
+                if show.returncode == 0 and re.search(rf"(?im)^(?:name: |package )?{re.escape(name)}\b", show.stdout):
+                    found.append(f"{pip} package {name} → remove with {pip} uninstall {'-y ' if pip == 'pip' else ''}{name}")
+                    break
+            if found:
+                lines.append(f"- {name}: " + "; ".join(found))
+        if not lines:
+            return ""
+        return "Installed software named in the order (how it is installed decides how it is removed):\n" + "\n".join(lines)
 
     def _local_context(self) -> str:
         sections = [f"Workspace: {self.workspace}"]

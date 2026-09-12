@@ -15,6 +15,7 @@ from .models import Action, ActionKind, ActionResult, ActionStatus, WorkspaceSna
 from .policy import (
     approval_reason,
     changed_paths,
+    harden_argv,
     resolve_inside,
     safe_environment,
     sha256_file,
@@ -93,6 +94,12 @@ class ActionExecutor:
 
     def run(self, action: Action) -> ActionResult:
         started = utc_now()
+        # Package commands run as they must (root, unattended) and the
+        # operator is asked about that exact form, never a softer one.
+        if action.argv:
+            action.argv = harden_argv(action.argv)
+        if action.pipeline:
+            action.pipeline = [harden_argv(stage) for stage in action.pipeline]
         try:
             reason = approval_reason(
                 action,

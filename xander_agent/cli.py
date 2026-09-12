@@ -124,6 +124,15 @@ def _interactive_approval(action: Any, reason: str) -> bool:
     return answer.strip().casefold() in {"y", "yes"}
 
 
+def _preapproved(action: Any, reason: str) -> bool:
+    """``xander run --yes``: the operator answered every ask up front."""
+
+    from .policy import action_text
+
+    print(f"approved ({reason}): {action_text(action)}", file=sys.stderr)
+    return True
+
+
 def _is_success(result: Mapping[str, Any]) -> bool:
     task = result.get("task") if isinstance(result.get("task"), Mapping) else {}
     handoff = result.get("handoff") if isinstance(result.get("handoff"), Mapping) else {}
@@ -457,6 +466,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = subparsers.add_parser("run", help="execute a goal through the complete mantra loop")
     run.add_argument("goal", nargs="+")
+    run.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="unattended: approve the privileged, package and destructive steps he would otherwise ask about",
+    )
     _add_request_options(run)
 
     plan = subparsers.add_parser("plan", help="research and prepare a proposal without applying changes")
@@ -748,6 +763,11 @@ def _run_command(args: argparse.Namespace, emit: Emitter) -> int:
             "answer": "answer",
             "test-triage": "test-triage",
         }[args.command]
+        approve: Callable[[Any, str], bool] | None = None
+        if getattr(args, "yes", False):
+            approve = _preapproved
+        elif not args.json and args.caller == "human":
+            approve = _interactive_approval
         result = invoke_engine(
             mode,
             workspace=workspace,
@@ -759,9 +779,9 @@ def _run_command(args: argparse.Namespace, emit: Emitter) -> int:
             acceptance_checks=args.accept,
             allowed_paths=args.allow,
             timeout=args.timeout,
-            setup_policy=args.setup_policy,
+            setup_policy="allow" if getattr(args, "yes", False) and args.setup_policy == "ask" else args.setup_policy,
             event_sink=emit,
-            approve=_interactive_approval if not args.json and args.caller == "human" else None,
+            approve=approve,
         )
         emit({"event": "result", "result": result})
         return 0 if _is_success(result) else 1

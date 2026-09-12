@@ -395,12 +395,21 @@ class Engine:
             self._emit(task, "result", "read-only task complete", self._result_payload(task))
             return task
 
-        self._phase(task, Phase.SET_UP, "loading only task-relevant skills, tools, and model depth")
+        self._phase(task, Phase.SET_UP, "gearing up: the skills, tools and model depth this order needs")
         selected_skills = self._select_gear(task.request.goal)
         readiness = self._readiness(task, [check.argv for check in task.request.acceptance_checks])
         task.tool_readiness = readiness.as_dict()
         task.evidence.append({"kind": "tool-readiness", **readiness.as_dict()})
         self._emit(task, "research", "mission tool preflight completed", readiness.as_dict())
+        if readiness.missing and not resume:
+            readiness = self._gear_up(task, readiness)
+        self._emit(
+            task,
+            "research",
+            self._gear_line(readiness, selected_skills),
+            {"gear": True, "tools": sorted(readiness.available), "missing": list(readiness.missing),
+             "skills": [item["name"] for item in selected_skills]},
+        )
         if readiness.missing and task.request.setup_policy != "allow":
             task.status = TaskStatus.WAITING_APPROVAL if task.request.setup_policy == "ask" else TaskStatus.UNVERIFIED
             task.failure = readiness.blocker()
@@ -449,6 +458,10 @@ class Engine:
         planning_failure = ""
         repeated_failures: dict[str, int] = {}
         discovery_hashes: set[str] = set()
+        # Every plan tried in this run. The screenshot loop alternated between
+        # two failing plans (A, B, A, B); comparing only with the previous one
+        # never noticed. A plan seen before is not a new approach.
+        seen_plan_hashes: set[str] = set()
         discovery_rounds = 0
         while task.attempt < attempt_limit:
             if time.monotonic() >= deadline:
@@ -632,7 +645,9 @@ class Engine:
                         task.request.mode == "implement"
                         and not task.request.acceptance_checks
                     ),
-                )
+                ) or self._phantom_failure(task.plan)
+                if task.plan is not None:
+                    seen_plan_hashes.add(self._plan_hash(task.plan))
                 if discovery_only and discovery_rounds >= self.MAX_DISCOVERY_ROUNDS:
                     lint_failure = (
                         "invalid plan: discovery budget exhausted; the next plan must make the "
@@ -746,8 +761,8 @@ class Engine:
                 continue
             new_hash = self._plan_hash(new_plan)
             current_hash = self._plan_hash(task.plan)
-            if new_hash in {current_hash, previous_plan_hash} - {""}:
-                task.failure = "replanning repeated the same approach; stopped"
+            if new_hash in ({current_hash, previous_plan_hash} | seen_plan_hashes) - {""}:
+                task.failure = "replanning repeated the same approach as an earlier attempt; stopped"
                 break
             if current_hash and new_hash != current_hash:
                 change = {
@@ -1144,6 +1159,20 @@ Rules:
 - Creating a script is not the goal; its result is. If the goal names an output (seen.txt, title.txt, a
   running program), the plan ends with the step that produces it, and the proof checks that output.
 - Scripts run unattended: never input(), never prompt, never wait for a key. Paths are known; hardcode them.
+- Name only files that LOCAL EVIDENCE lists or that an earlier action of this plan creates. A command
+  on a file that does not exist is rejected before anything runs. Never invent helper scripts to
+  remove, check or wrap something one command already does.
+- Removing or installing software: LOCAL EVIDENCE says how it is installed (dpkg/apt, snap, pip,
+  flatpak, a bare binary). Use that manager's own command, e.g. ["apt-get","purge","-y","name"] or
+  ["pip","uninstall","-y","name"]. Root and -y are added for you and the operator is asked once;
+  never write sudo yourself. Prove removal with ["test","!","-e","/usr/bin/name"] (the path
+  LOCAL EVIDENCE showed), never with a query that fails when the package is gone.
+- Compiled languages: a Rust program is a cargo project (["cargo","init","--name","x"] or CREATE
+  Cargo.toml + src/main.rs), built with ["cargo","build"] and proven with ["cargo","test"] or by
+  running the binary from target/debug/. WebAssembly from text: CREATE a .wat file, then
+  ["wat2wasm","name.wat","-o","name.wasm"], then run it from a small node script with WebAssembly.instantiate.
+- Keep prose short: `summary` at most 20 words, `decision` at most 25 words, `why` at most 40 words,
+  every `expected` at most 15 words. The room is for `content` and `patch`, not for talk.
 - `decision` names the single next move you chose, in one plain sentence the operator can read.
 - `why` says what evidence made that the best move over the alternative you rejected. Cite the local
   evidence, prior failure, or check that decided it; never restate the goal back as the reason.
@@ -1183,6 +1212,76 @@ Rules:
 
     def _readiness(self, task: TaskRecord, commands: Sequence[Sequence[str]] = ()) -> ToolReadiness:
         return assess(task.request.goal, self.workspace, commands, brain=getattr(self.backend, "doctor", None))
+
+    def _gear_up(self, task: TaskRecord, readiness: ToolReadiness) -> ToolReadiness:
+        """Upgrade himself for this order before the first action.
+
+        Analysis said what the order needs; if a tool is not on the machine
+        he gets it now, deterministically, instead of hoping the planner
+        remembers to. Each install goes through the executor, so root and
+        package policy still ask the operator (or the ``--yes`` / setup
+        policy already given). Returns the readiness after the attempt.
+        """
+
+        if not readiness.missing or not task.snapshot:
+            return readiness
+        policy = task.request.setup_policy
+        if policy == "never" or (policy == "ask" and self.approve is None):
+            return readiness
+        executor = ActionExecutor(
+            self.workspace,
+            task.snapshot,
+            autonomy=task.request.autonomy,
+            allowed_paths=task.request.allowed_paths,
+            approve=self._approve(task),
+            default_timeout=min(task.request.timeout, 1_200),
+        )
+        import shlex
+
+        installed: list[str] = []
+        for need in readiness.needs:
+            if need.name not in readiness.missing:
+                continue
+            for suggestion in need.install:
+                try:
+                    argv = shlex.split(suggestion)
+                except ValueError:
+                    continue
+                if not argv or argv[0] in {"install", "ollama"} or "`" in suggestion:
+                    continue  # prose ("install or enable `x`"), not a command
+                action = Action(kind=ActionKind.COMMAND, argv=argv, expected=f"install {need.name}", blocking=False)
+                self._emit(task, "action", f"upgrading myself: {need.name} via {' '.join(argv)}", {"action": action.model_dump(mode="json")})
+                result = executor.run(action)
+                task.results.append(result)
+                self._emit(task, "action", result.status, {"result": result.model_dump(mode="json")})
+                if result.status == ActionStatus.OK:
+                    installed.append(need.name)
+                    break
+        if installed:
+            task.evidence.append({"kind": "gear_up", "installed": installed})
+            self._emit(
+                task,
+                "voice",
+                "upgraded myself for this order: installed " + ", ".join(installed),
+                {"moment": "gear", "speaker": self._voice.speaker},
+            )
+        after = self._readiness(task, [check.argv for check in task.request.acceptance_checks])
+        task.tool_readiness = after.as_dict()
+        self.task_store.save(task)
+        return after
+
+    @staticmethod
+    def _gear_line(readiness: ToolReadiness, skills: Sequence[dict[str, str]]) -> str:
+        tools = sorted(readiness.available)
+        parts = []
+        if tools:
+            parts.append("tools " + ", ".join(tools[:8]))
+        names = [str(item.get("name")) for item in skills if item.get("name")]
+        if names:
+            parts.append("skills " + ", ".join(names[:5]))
+        if readiness.missing:
+            parts.append("still missing " + ", ".join(readiness.missing))
+        return "geared up: " + (" · ".join(parts) if parts else "nothing extra needed")
 
     @staticmethod
     def _infer_checks(plan: ModelPlan) -> list[AcceptanceCheck]:
@@ -1483,6 +1582,63 @@ Rules:
                     problems.append(f"validation action before first mutation: {action.id}")
                     break
         return "invalid plan: " + "; ".join(problems) if problems else ""
+
+    #: Commands that only make sense on a file that is already there. `rm
+    #: remove-stegosuite.sh` for a script nobody wrote is the observed case.
+    _CONSUMES_EVERY_OPERAND = {"rm", "cat", "head", "tail", "wc", "unlink", "rmdir"}
+    _CONSUMES_FIRST_OPERAND = {"python3", "python", "bash", "sh", "node", "ruby", "perl"}
+    _FILE_LIKE = re.compile(r"^[\w][\w./ -]*\.[A-Za-z0-9]{1,5}$")
+
+    def _phantom_failure(self, plan: ModelPlan | None) -> str:
+        """Reject a plan that acts on files that do not exist and that no
+        earlier step of the same plan creates. The executor would fail the
+        same way, but its "No such file" told the planner nothing it acted
+        on; this names the phantom and says what the folder really holds."""
+
+        if plan is None:
+            return ""
+        created: set[str] = set()
+        phantoms: list[str] = []
+        for action in plan.actions:
+            if action.kind == ActionKind.CREATE and action.path:
+                created.add(str(Path(action.cwd or ".") / action.path))
+                continue
+            if action.kind == ActionKind.PATCH:
+                continue
+            commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
+            for argv in commands:
+                if not argv:
+                    continue
+                executable = Path(argv[0]).name
+                operands = [token for token in argv[1:] if not token.startswith("-")]
+                if executable in self._CONSUMES_EVERY_OPERAND:
+                    candidates = operands
+                elif executable in self._CONSUMES_FIRST_OPERAND:
+                    candidates = [token for token in operands[:1] if self._FILE_LIKE.match(token)]
+                else:
+                    continue
+                for token in candidates:
+                    if "://" in token or token in {".", "..", "/"}:
+                        continue
+                    relative = str(Path(action.cwd or ".") / token)
+                    if relative in created or Path(token).name in {Path(c).name for c in created}:
+                        continue
+                    target = Path(token) if Path(token).is_absolute() else self.workspace / action.cwd / token
+                    if not target.exists():
+                        phantoms.append(f"{token} (step {action.id})")
+        if not phantoms:
+            return ""
+        try:
+            here = sorted(p.name for p in self.workspace.iterdir() if not p.name.startswith("."))[:30]
+        except OSError:
+            here = []
+        return (
+            "invalid plan: it acts on files that do not exist and no earlier step creates: "
+            + ", ".join(phantoms[:6])
+            + ". The folder holds: "
+            + (", ".join(here) if here else "nothing")
+            + ". Name only files that exist or that this plan creates first."
+        )
 
     @staticmethod
     def _is_validation_command(argv: Sequence[str]) -> bool:

@@ -281,6 +281,7 @@ class XanderEvent(StrictModel):
         "result",
         "error",
         "voice",
+        "steering",
     ]
     timestamp: str = Field(default_factory=utc_now)
     phase: Phase | None = None
