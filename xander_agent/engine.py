@@ -131,6 +131,7 @@ class Engine:
         self._written: list[dict[str, Any]] = []
         self._voice = Commentator(voice="off")
         self._squad = Squad(helpers=[])
+        self._gear: list[dict[str, str]] = []
 
     def execute(
         self,
@@ -397,6 +398,7 @@ class Engine:
 
         self._phase(task, Phase.SET_UP, "gearing up: the skills, tools and model depth this order needs")
         selected_skills = self._select_gear(task.request.goal)
+        self._gear = selected_skills  # the coder reads the same cards as the planner
         readiness = self._readiness(task, [check.argv for check in task.request.acceptance_checks])
         task.tool_readiness = readiness.as_dict()
         task.evidence.append({"kind": "tool-readiness", **readiness.as_dict()})
@@ -1214,9 +1216,41 @@ Rules:
         raw = self.backend.generate(prompt, role=role, schema=ModelPlan, think=False, timeout=task.request.timeout)
         self._record_model_stats(task, role)
         plan = ModelPlan.model_validate_json(raw)
+        self._resolve_dependencies(plan)
         if task.request.mode == "implement" and not plan.acceptance_checks and not task.request.acceptance_checks:
             plan.acceptance_checks = self._infer_checks(plan)
         return plan
+
+    @staticmethod
+    def _resolve_dependencies(plan: ModelPlan) -> None:
+        """`depends_on: ["add.wat"]` means the step that creates add.wat.
+
+        The planner names dependencies by path or label as often as by id.
+        A label that matches an earlier action's path, id or expected text
+        becomes that id; anything else is dropped, because actions run in
+        listed order anyway and an unresolvable label only blocks the step.
+        """
+
+        seen: list[Action] = []
+        for action in plan.actions:
+            resolved: list[str] = []
+            for label in action.depends_on:
+                key = label.strip().casefold()
+                if not key:
+                    continue
+                match = next(
+                    (
+                        earlier
+                        for earlier in seen
+                        if key in {earlier.id.casefold(), earlier.path.casefold(), earlier.expected.casefold()}
+                        or (earlier.path and key.endswith(earlier.path.casefold()))
+                    ),
+                    None,
+                )
+                if match is not None and match.id not in resolved:
+                    resolved.append(match.id)
+            action.depends_on = resolved
+            seen.append(action)
 
     def _readiness(self, task: TaskRecord, commands: Sequence[Sequence[str]] = ()) -> ToolReadiness:
         return assess(task.request.goal, self.workspace, commands, brain=getattr(self.backend, "doctor", None))
@@ -2135,17 +2169,19 @@ Rules:
             notes.append(f"step '{wish[:60]}' → {' '.join(argv)[:120]}")
         return notes
 
+    def _cut_off(self) -> bool:
+        """Did the last generation stop because it ran out of tokens?"""
+
+        stats = getattr(self.backend, "last_stats", None)
+        return isinstance(stats, dict) and str(stats.get("done_reason") or "") == "length"
+
     @staticmethod
     def _unified_patch(current: str, new: str, path: str) -> str:
         """A diff `git apply` accepts. Both sides end with a newline: a last
         line without one gives a hunk line without one, which git calls a
         corrupt patch (seen 2026-09-12 on a coder rewrite)."""
 
-        if current and not current.endswith("\n"):
-            current += "\n"
-        if new and not new.endswith("\n"):
-            new += "\n"
-        return "".join(
+        lines = list(
             difflib.unified_diff(
                 current.splitlines(keepends=True),
                 new.splitlines(keepends=True),
@@ -2153,6 +2189,15 @@ Rules:
                 tofile=f"b/{path}",
             )
         )
+        out: list[str] = []
+        for line in lines:
+            if line.endswith("\n"):
+                out.append(line)
+                continue
+            # A final line without a newline: say so the way git does, so the
+            # context matches the file on disk instead of "does not apply".
+            out.append(line + "\n\\ No newline at end of file\n")
+        return "".join(out)
 
     def _fill_content(self, task: TaskRecord, action: Action) -> str:
         """Write a stubbed file for real, in its own generation.
@@ -2216,6 +2261,32 @@ Rules:
             if current_body
             else ""
         )
+        # What went wrong last time is the one thing a rewrite must know.
+        # Without it the coder produced the same invalid file three times.
+        failed = ""
+        if task.failure or task.results:
+            tail = next(
+                (
+                    (result.stderr or result.reason or result.stdout)[-1200:]
+                    for result in reversed(task.results)
+                    if result.status != ActionStatus.OK and (result.stderr or result.reason or result.stdout)
+                ),
+                "",
+            )
+            detail = "\n".join(part for part in (task.failure[:600], tail) if part)
+            if detail.strip():
+                failed = f"WHAT FAILED LAST TIME (if it concerns this file, fix exactly this):\n{detail}"
+        # Only a failure that names this file makes "the same body again" a
+        # failure; when run.js broke, an unchanged add.wat is simply correct.
+        failed_here = bool(failed) and Path(action.path).name in failed
+        # The cards gear-up selected: the same reference the planner read.
+        # A .wat file written from memory was wrong twice; written next to
+        # the canonical module it is right.
+        cards = "\n\n".join(
+            f"SKILL {item.get('name')}:\n{str(item.get('content') or '')[:2500]}"
+            for item in list(getattr(self, "_gear", []))[:2]
+            if item.get("content")
+        )
         prompt = f"""
 Write the complete, finished contents of one file. Output the file body and nothing else:
 no prose, no explanation, no markdown fence.
@@ -2227,6 +2298,8 @@ CONSTRAINTS: {json.dumps(task.effective_constraints[:8])}
 PLANNER SKETCH (a hint only — replace it with the real thing):
 {existing[:1200]}
 {current}
+{failed}
+{("REFERENCE (follow these forms exactly):" + chr(10) + cards) if cards else ""}
 
 Requirements:
 - Real, working, complete code. Never a stub, placeholder, TODO, or "code goes here".
@@ -2235,9 +2308,27 @@ Requirements:
 - If it is a program a person uses, it must actually be usable end to end.
 """.strip()
         try:
+            # A file that just failed gets a thinking pass: the same 9B build
+            # that wrote it wrong from the hip usually gets it right on reflection.
             raw = self.backend.generate(
-                prompt, role="coder", think=False, timeout=max(300, task.request.timeout)
+                prompt, role="coder", think=bool(failed_here), timeout=max(300, task.request.timeout)
             )
+            if self._cut_off():
+                # The answer hit the token limit: a degenerate run of the same
+                # token, or binary data inlined as an array (run.js, 2026-09-12).
+                # A truncated file is never a file. One retry, told exactly why.
+                self._emit(task, "action", f"{action.path}: the coder ran out of room; retrying shorter", {})
+                raw = self.backend.generate(
+                    prompt
+                    + "\n\nYOUR PREVIOUS ANSWER WAS CUT OFF AT THE TOKEN LIMIT. Write a SHORT, complete file: "
+                    "no inlined binary or numeric data (read files from disk instead), no repetition, "
+                    "no long tables. Under 80 lines.",
+                    role="coder",
+                    think=False,
+                    timeout=max(300, task.request.timeout),
+                )
+                if self._cut_off():
+                    return f"blocked: the coder could not finish {action.path} within the token limit twice"
         except Exception as exc:
             return f"blocked: could not write {action.path}: {type(exc).__name__}"
         body = self._unfence(str(raw))
@@ -2248,6 +2339,8 @@ Requirements:
             return f"blocked: the coder returned nothing for {action.path}"
         if live_path is not None and live_path.is_file():
             patch = self._unified_patch(current_body, body, action.path)
+            if not patch and failed_here:
+                return f"blocked: the coder produced the same {action.path} that just failed; the approach must change"
             if not patch:
                 # The file already holds exactly what the coder would write.
                 # That is the goal met, not a failure to act.

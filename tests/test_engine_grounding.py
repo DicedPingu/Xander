@@ -261,3 +261,33 @@ def test_gear_up_pauses_headless_when_policy_is_ask(tmp_path: Path, monkeypatch)
 def test_steering_events_validate() -> None:
     event = XanderEvent(run_id="t", sequence=1, type="steering", message="you said: use bash")
     assert event.type == "steering"
+
+
+# -- dependencies named by path, not id --------------------------------------------------------
+def test_dependencies_named_by_path_resolve_to_the_creating_step() -> None:
+    plan = ModelPlan(
+        summary="wasm",
+        actions=[
+            Action(id="one", kind=ActionKind.CREATE, path="add.wat", content="(module)", expected="the module"),
+            Action(id="two", kind=ActionKind.COMMAND, argv=["wat2wasm", "add.wat"], depends_on=["add.wat"]),
+            Action(id="three", kind=ActionKind.COMMAND, argv=["node", "run.js"], depends_on=["the module", "ghost"]),
+        ],
+    )
+    Engine._resolve_dependencies(plan)
+    assert plan.actions[1].depends_on == ["one"]
+    assert plan.actions[2].depends_on == ["one"], "unknown labels are dropped, known ones map to ids"
+
+
+def test_unified_patch_marks_missing_final_newlines_the_way_git_does(tmp_path: Path) -> None:
+    import subprocess
+
+    marker = "\\ No newline at end of file\n"
+    assert Engine._unified_patch("a\nb\n", "a\nc", "f.txt").endswith("+c\n" + marker)
+
+    (tmp_path / "f.txt").write_text("a\nb", encoding="utf-8")  # the file on disk lacks one
+    patch = Engine._unified_patch("a\nb", "a\nc\n", "f.txt")
+    assert marker in patch
+    (tmp_path / "p.patch").write_text(patch, encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    check = subprocess.run(["git", "apply", "--check", "p.patch"], cwd=tmp_path, capture_output=True, text=True)
+    assert check.returncode == 0, check.stderr
