@@ -576,6 +576,8 @@ class Engine:
             discovery_only = task.request.mode == "implement" and self._is_discovery_plan(task.plan)
             lint_failure = ""
             if discovery_only and discovery_rounds < self.MAX_DISCOVERY_ROUNDS:
+                for repaired in self._fill_argv(task, task.plan):
+                    self._emit(task, "plan", repaired, {})
                 discovery_hash = self._plan_hash(task.plan)
                 if discovery_hash in discovery_hashes:
                     lint_failure = "invalid plan: planner repeated the same discovery slice"
@@ -776,6 +778,11 @@ class Engine:
                 self._emit(task, "logic_change", "approach changed after new evidence", change)
             previous_plan_hash = current_hash
             task.plan = new_plan
+            # The same repair the first plan gets: a body-less patch on a
+            # small existing file becomes a rewrite the coder fills. Replans
+            # skipped this and hit "patch without a unified patch body" twice.
+            for path in self._repair_plan(task):
+                self._emit(task, "action", f"will rewrite {path} instead of patching it", {})
             task.check_results = []
             reuse_existing_plan = True
             resume = True
@@ -1171,8 +1178,9 @@ Rules:
   Cargo.toml + src/main.rs), built with ["cargo","build"] and proven with ["cargo","test"] or by
   running the binary from target/debug/. WebAssembly from text: CREATE a .wat file, then
   ["wat2wasm","name.wat","-o","name.wasm"], then run it from a small node script with WebAssembly.instantiate.
-- Keep prose short: `summary` at most 20 words, `decision` at most 25 words, `why` at most 40 words,
-  every `expected` at most 15 words. The room is for `content` and `patch`, not for talk.
+- `actions` is the plan. It is never empty in implement mode: at least the change and the proof.
+  Prose fields stay short (`summary` ≤ 20 words, `decision` ≤ 25, `why` ≤ 40, each `expected` ≤ 15)
+  so the room goes to `content`, `patch` and `argv`.
 - `decision` names the single next move you chose, in one plain sentence the operator can read.
 - `why` says what evidence made that the best move over the alternative you rejected. Cite the local
   evidence, prior failure, or check that decided it; never restate the goal back as the reason.
@@ -1305,7 +1313,11 @@ Rules:
         problems, and any counter keyed on the raw string would never notice.
         """
 
-        return re.sub(r"\d+", "#", str(failure or "").strip().casefold())[:300]
+        text = str(failure or "").strip().casefold()
+        # Action ids are fresh every plan; "validation action before first
+        # mutation: d598ba203f4b" is one wall, not twelve.
+        text = re.sub(r"\b[0-9a-f]{12}\b", "#", text)
+        return re.sub(r"\d+", "#", text)[:300]
 
     def _execute_actions(
         self,
@@ -1574,7 +1586,9 @@ Rules:
         for action in plan.actions:
             if action.kind == ActionKind.PATCH and action.patch.strip():
                 mutation_seen = True
-            elif action.kind == ActionKind.CREATE and action.path and action.content:
+            elif action.kind == ActionKind.CREATE and action.path:
+                # Content may still be empty here: the coder fills it at
+                # execution time. The order is what this check is about.
                 mutation_seen = True
             elif not mutation_seen:
                 commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
@@ -2078,6 +2092,12 @@ Rules:
             if not wish:
                 # A bare step: the plan's own decision, then the goal, say what it is for.
                 wish = " ".join((plan.decision or plan.summary or task.request.goal).split())[:300]
+            # "inspect: stats.py" — a read-only step that names an existing file
+            # and nothing else means read it. No model call for that.
+            if action.kind == ActionKind.INSPECT and action.path and (self.workspace / action.cwd / action.path).is_file():
+                action.argv = ["cat", action.path]
+                notes.append(f"step 'inspect {action.path}' → cat {action.path}")
+                continue
             argv = self._deterministic_argv(wish)
             if argv:
                 action.argv = argv
@@ -2115,6 +2135,25 @@ Rules:
             notes.append(f"step '{wish[:60]}' → {' '.join(argv)[:120]}")
         return notes
 
+    @staticmethod
+    def _unified_patch(current: str, new: str, path: str) -> str:
+        """A diff `git apply` accepts. Both sides end with a newline: a last
+        line without one gives a hunk line without one, which git calls a
+        corrupt patch (seen 2026-09-12 on a coder rewrite)."""
+
+        if current and not current.endswith("\n"):
+            current += "\n"
+        if new and not new.endswith("\n"):
+            new += "\n"
+        return "".join(
+            difflib.unified_diff(
+                current.splitlines(keepends=True),
+                new.splitlines(keepends=True),
+                fromfile=f"a/{path}",
+                tofile=f"b/{path}",
+            )
+        )
+
     def _fill_content(self, task: TaskRecord, action: Action) -> str:
         """Write a stubbed file for real, in its own generation.
 
@@ -2150,14 +2189,7 @@ Rules:
                 action.kind = ActionKind.NOTE
                 action.content = f"{action.path} already contains the requested content"
                 return f"{action.path}: already contains the requested content"
-            patch = "".join(
-                difflib.unified_diff(
-                    current_body.splitlines(keepends=True),
-                    existing.splitlines(keepends=True),
-                    fromfile=f"a/{action.path}",
-                    tofile=f"b/{action.path}",
-                )
-            )
+            patch = self._unified_patch(current_body, existing, action.path)
             if not patch:
                 return f"blocked: could not derive a safe patch for {action.path}"
             action.kind = ActionKind.PATCH
@@ -2215,14 +2247,7 @@ Requirements:
         if not body.strip():
             return f"blocked: the coder returned nothing for {action.path}"
         if live_path is not None and live_path.is_file():
-            patch = "".join(
-                difflib.unified_diff(
-                    current_body.splitlines(keepends=True),
-                    body.splitlines(keepends=True),
-                    fromfile=f"a/{action.path}",
-                    tofile=f"b/{action.path}",
-                )
-            )
+            patch = self._unified_patch(current_body, body, action.path)
             if not patch:
                 # The file already holds exactly what the coder would write.
                 # That is the goal met, not a failure to act.
