@@ -1,0 +1,24 @@
+# Xander — what is next (top = next). Move a line to DONE with the date when the arena proves it.
+
+- [ ] Arena: fizzbuzz / hidden-browser / watch-folder must pass on the chosen model. Then add
+      scenarios for: patching an existing file, a multi-file project, reading a URL and summarizing,
+      clicking in the operator's Chrome (bridge), self-improvement round trip.
+- [ ] Decide the main model from the arena numbers: qwenpaw-9b-heretic vs qwen3.5-9b-ultra-heretic
+      (4/100 refusals). Pull Qwythos-9B when HF stops rate-limiting and add it to the comparison.
+- [ ] XanderWorld: `/new-project <name>` creates `SPQR/XanderWorld/NNN - name/` with a `.folder`,
+      binds the workspace there, and stores the goal.
+- [ ] Write a `.folder` into every project he works in (once per workspace, merged, never clobbered).
+- [ ] A compact machine map of any project (not human-readable) he can load instead of the code.
+- [ ] Deliver the first practical missions in `.xander` (GitHub profile, Codewars kata, Android app).
+- [ ] Bounded URL/repo crawling with provenance (research-2026-09-10.md §2) and a browser tool (§3).
+- [ ] Durable resume: kill mid-write / mid-check / at approval and recover without duplicate effects (§11).
+- [ ] Self-update: stage → verify in a fresh process → restart at a safe boundary; rollback restores
+      only his own changes (§7).
+- [ ] Log everything relevant, once; keep the plain log twin readable.
+
+DONE
+- 2026-09-12  one feed, one composer, no tabs; copy with ctrl+c; ↑↓ history; mid-run messages reach him
+- 2026-09-12  small orders run directly; workspace writes need no approval; venting is conversation
+- 2026-09-12  arena: `xander arena` runs written orders in throwaway folders with a model judge
+- 2026-09-12  one resident heretic model for every role; old huihui_ai builds deleted
+- 2026-09-11  discussion-first routing and composer commands

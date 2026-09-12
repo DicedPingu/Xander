@@ -39,6 +39,7 @@ from .variants import (
 
 CLI_SCHEMA = "xander.cli/v1"
 _COMMANDS = {
+    "arena",
     "learn",
     "say",
     "self",
@@ -515,6 +516,17 @@ def build_parser() -> argparse.ArgumentParser:
     self_set.add_argument("value")
 
     subparsers.add_parser("doctor", help="check the interface, state paths, models, and tools")
+    arena = subparsers.add_parser(
+        "arena", help="give Xander written orders in throwaway folders and let a judge score what he did"
+    )
+    arena.add_argument("names", nargs="*", help="scenario names; default: a random sample")
+    arena.add_argument("--all", action="store_true", help="run every scenario")
+    arena.add_argument("--sample", type=int, default=3, help="how many to draw at random (default 3)")
+    arena.add_argument("--tag", action="append", default=[], help="only scenarios with this tag")
+    arena.add_argument("--seed", type=int, default=None)
+    arena.add_argument("--keep", action="store_true", help="keep the throwaway workspaces")
+    arena.add_argument("--no-judge", action="store_true", help="deterministic checks only")
+    arena.add_argument("--list", action="store_true", help="list scenarios and exit")
     subparsers.add_parser("oversee", help="show the latest task, model choices, delegations, and blockers")
 
     skills = subparsers.add_parser("skills", help="query Xander's compact skill registry")
@@ -685,6 +697,24 @@ def _run_command(args: argparse.Namespace, emit: Emitter) -> int:
 
         run_stdio()
         return 0
+    if args.command == "arena":
+        from .arena import SCENARIOS, run_arena
+
+        if args.list:
+            emit({"event": "arena", "scenarios": [{"name": s.name, "tags": list(s.tags), "prompt": s.prompt} for s in SCENARIOS]})
+            return 0
+        payload = run_arena(
+            names=args.names or None,
+            sample=None if (args.all or args.names) else args.sample,
+            tags=args.tag or None,
+            seed=args.seed,
+            keep=args.keep,
+            verbose=True,
+            use_judge=not args.no_judge,
+            variant=args.variant,
+        )
+        emit({key: value for key, value in payload.items() if key != "results"})
+        return 0 if payload["passed"] == payload["total"] else 1
     if args.command == "doctor":
         report = doctor_payload(workspace, variant=args.variant)
         emit(report)

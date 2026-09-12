@@ -1,0 +1,71 @@
+XANDER — our one AI soldier. Reads an order in plain language, does it, proves it, answers in one line.
+Run him:  xander            (terminal: one feed, one composer)
+          xander arena      (give him written orders in throwaway folders; a judge scores him)
+          xander doctor     (models, tools, paths)
+
+.xander           what we want from him, his working agreement, what is still open   ← read first
+.todo             the short list of what to do next on him
+.changes          every AI that touches him signs what it changed here
+.folder           this map
+
+xander_agent/     the package. Everything he is.
+  cli.py            entry point: every subcommand, plus invoke_engine() the TUI and MCP call
+  tui.py            the terminal: feed + composer, ↑↓ history, mid-run messages, approvals, /commands
+  intents.py        first door for typed text: /command, order, question, discussion, venting, chdir
+  quick.py          one-line orders (touch, mkdir, rename, write "x" to f, run `cmd`) done without a plan
+  engine.py         the mission loop: analyze → research → plan → act → check → judge → learn
+  policy.py         what needs approval: only root, packages, credentials, outside-workspace writes
+  executor.py       runs one Action (command / pipeline / create / patch) inside the workspace
+  models.py         the data: Action, ModelPlan, TaskRecord, XanderEvent, MissionGuide
+  calibers.py       which model serves which role (one resident heretic build for all)
+  backend.py        the Ollama client (+ optional Anthropic / hybrid)
+  variants.py       clone profiles (config/variants/*.json): routing, autonomy, voice
+  arena.py          the behavior test: prompt → he acts → judge decides if that is what was meant
+  research.py       gathers local truth and docs before a plan
+  web.py            small lookups: duckduckgo, wikipedia, pypi, stackoverflow, github
+  conversation.py   talk(): answers questions and remarks without a mission
+  narrator.py       turns events into readable lines and writes the plain log twin
+  eventlog.py       the small human-scannable event log
+  commentary.py     his short first-person working voice
+  squad.py          Master (judge) and Lurker (constraint scout); which form he takes
+  memory.py         preferences and lessons, per namespace
+  skills.py         SQLite skill registry; semantic.py adds dense retrieval
+  workboard.py      per-workspace goals and pinned TODOs
+  tasks.py          persisted task records (state/tasks)
+  mission.py        human views over those records (/history, /show)
+  steering.py       the back channel: what you type mid-run reaches him at safe points
+  selfwork.py       him editing himself, guarded and verified in a fresh process
+  learn.py, learnrun.py   a standing learning queue and the loop that works it
+  readiness.py      which tools/models a goal needs and whether they are present
+  handoff.py        the .ai-context.md note he leaves for the next agent
+  hooks.py          operator hooks narrowed to a mission
+  paths.py          where his runtime dirs live (config/, state/, cache/, logs/)
+  power.py          battery watch; stops everything at 0%
+  desktop.py        /desktop screenshot
+  opening.py        the greeting styles
+  stats.py          the scoreboard from persisted tasks
+  oversight.py      read-only view of the current mission
+  bridge.py         loopback HTTP bridge (browser addon)
+  mcp_server.py, mcp_client.py   MCP both ways (Codex/Claude call him; he calls servers)
+  gemini.py         optional second opinion
+  projectlog.py     per-project event log
+
+tests/            pytest suite (348 tests). test_tui.py drives the terminal; the rest are units.
+config/           runtime config (gitignored): variants/*.json, mcp-servers.json
+state/            runtime state (gitignored): tasks/, memory/, workboards/, arena/ reports
+cache/, logs/     runtime, gitignored
+docs/             DESIGN-interactive-xander.md, research-2026-09-10.md (the research log)
+knowledge/        skills he authored
+capabilities/     capability packs (flutter, web, databases, mobile pentest)
+projects/         index of external workspaces he has worked in (hash-named)
+labs/             experiments (witcraft-arena) — 3.9 GB, not part of him
+
+xander.py         launcher used by ASKAR/bin/xander
+_attic/           the July prototype (agent.py, toolbelt.py, …). Nothing imports it.
+AGENTS.md INFO.md README.md CHANGELOG.md   older descriptions; .xander is the one that is kept current
+
+Rules for anyone working in here
+- Improve Xander so he can do the work himself. Do not do his work for him.
+- One resident model on the 8 GB card: never route two roles to two builds.
+- Ordinary writes inside a workspace never ask permission. Root, packages, credentials, outside writes do.
+- Run tests/ before you leave, run `xander arena` after touching engine/policy/intents, sign .changes.

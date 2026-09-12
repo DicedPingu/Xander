@@ -102,7 +102,24 @@ INTERPRETERS = {"bash", "dash", "node", "perl", "python", "python3", "ruby", "sh
 CONTAINER_EXECUTABLES = {"docker", "podman"}
 COMMAND_WRAPPERS = {"env", "nice", "nohup", "stdbuf", "timeout"}
 READ_ONLY_EXECUTABLES = {
+    "[",
+    "basename",
     "cat",
+    "cmp",
+    "cut",
+    "diff",
+    "dirname",
+    "echo",
+    "md5sum",
+    "printf",
+    "readlink",
+    "realpath",
+    "sha256sum",
+    "sleep",
+    "sort",
+    "test",
+    "tr",
+    "uniq",
     "date",
     "df",
     "du",
@@ -475,7 +492,12 @@ def _argv_risk(argv: list[str]) -> Risk:
         if executable in {"python", "python3"} and len(argv) >= 3 and argv[1:3] in (
             ["-m", "pytest"],
             ["-m", "compileall"],
+            ["-m", "py_compile"],
+            ["-m", "unittest"],
+            ["-m", "json.tool"],
         ):
+            return Risk.LOW
+        if len(argv) == 2 and argv[1] in {"--version", "-V"}:
             return Risk.LOW
         return Risk.HIGH
     if executable == "uv":
@@ -610,6 +632,33 @@ def _contained_filesystem_mutation(argv: list[str], workspace: Path) -> bool:
     return True
 
 
+def _contained_script_run(argv: list[str], workspace: Path) -> bool:
+    """``python3 fizzbuzz.py`` / ``bash build.sh``: an interpreter running a
+    script that lives inside the workspace. That is the ordinary way work gets
+    proven and is no more privileged than the script's own contents, which
+    the executor already wrote or the operator already has. Inline code
+    (``-c``, ``-e``) and scripts outside the workspace stay HIGH."""
+
+    effective = argv
+    while effective and Path(effective[0]).name in COMMAND_WRAPPERS:
+        effective = _wrapped_argv(effective)
+    if len(effective) < 2 or Path(effective[0]).name not in INTERPRETERS:
+        return False
+    workspace = workspace.expanduser().resolve(strict=False)
+    index = 1
+    while index < len(effective) and effective[index] in {"-u", "-B", "-q", "-W", "-X", "--"}:
+        index += 1
+    if index >= len(effective):
+        return False
+    script = effective[index]
+    if script.startswith("-"):
+        return False
+    resolved = (Path(script) if Path(script).is_absolute() else workspace / script).resolve(strict=False)
+    if resolved == workspace or workspace not in resolved.parents or not resolved.is_file():
+        return False
+    return not contains_secret_path(resolved) and not any(part in GENERATED_PARTS for part in resolved.parts)
+
+
 def approval_reason(
     action: Action,
     workspace: Path,
@@ -621,7 +670,9 @@ def approval_reason(
     if risk == Risk.HIGH and action.kind in {ActionKind.COMMAND, ActionKind.PIPELINE}:
         contained = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
         if all(
-            _contained_filesystem_mutation(argv, workspace) or _argv_risk(argv) != Risk.HIGH
+            _contained_filesystem_mutation(argv, workspace)
+            or _contained_script_run(argv, workspace)
+            or _argv_risk(argv) != Risk.HIGH
             for argv in contained
             if argv
         ) and action.risk != Risk.HIGH:

@@ -1,0 +1,30 @@
+# Xander — who changed what. Newest on top. Every AI that touches him adds an entry and signs it.
+# Format:  date  ·  who  ·  what changed (files)  ·  how it was proven
+
+2026-09-12 · Claude Opus 5 (Claude Code) · branch worktree-discussion-first-commands
+  - xander_agent/tui.py rewritten: one feed of selectable Static entries + one composer; no tabs, no
+    loop rail, no controls form; ↑↓ history; every typed line echoed; mid-run lines → engine steering.
+  - xander_agent/quick.py (new): one-line file orders parsed offline and executed without a plan.
+  - xander_agent/policy.py: workspace-contained touch/mkdir/cp/mv/rm and interpreters running a
+    workspace script are MEDIUM, not HIGH; py_compile/unittest LOW; test/sleep/echo read-only.
+  - xander_agent/engine.py: quick path; acceptance checks synthesized from the plan instead of a
+    3× "no checks" wall; argv-less command steps repaired (deterministic "run X.py", else one
+    focused model call with strict validation); identical rewrite = done, not blocked; empty file
+    means empty; answers sized to the message; planner told to use installed tools only.
+  - xander_agent/intents.py: tight chdir phrase; venting → conversation; everyday verbs authorize.
+  - xander_agent/calibers.py + variants.py: one resident heretic model for all roles; heretic and
+    uncensored builds pass the local policy; alternatives tried when the main build is absent.
+  - xander_agent/arena.py (new) + `xander arena`: written orders in throwaway folders, deterministic
+    checks + model judge, report under state/arena/.
+  - Root prototype (agent.py … toolbelt.py) moved to _attic/. Xander.MD → .xander (rewritten).
+    .folder, .todo, .changes added. Monica/config.py → same heretic model. Six huihui_ai models
+    removed from Ollama; qwen3.5-9b-ultra-heretic pulled for comparison.
+  Proven by: tests/ 348 passed; arena one-liners 4/4 (judge 10/10); hard scenarios 2/5 → being fixed
+  (see state/arena/*.json); TUI screenshot reviewed.
+
+2026-09-11 · Claude Opus 5 (Claude Code) · de68540
+  - Discussion-first routing, composer commands, stored goals/TODOs, drafts (intents.py, tui.py).
+  Proven by: tests/test_intents.py, tests/test_interface_tui.py (since replaced by test_tui.py).
+
+2026-09-10 · Codex · docs/research-2026-09-10.md
+  - Research only: twelve-point architecture strategy and adoption order. No code changed.

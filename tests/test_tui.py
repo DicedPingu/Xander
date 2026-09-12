@@ -274,7 +274,7 @@ def test_slash_lines_never_run_and_conversation_is_not_a_mission(tmp_path: Path,
             assert chats == ["Quick fucking asking so much", "what do you think of this folder?"]
             assert "Xander › sure." in text
             _type(app, "/activity")
-            assert "no tabs" in _feed_text(app)
+            assert "not a Xander command" in _feed_text(app).split("you › /activity")[-1]
 
     asyncio.run(scenario())
 

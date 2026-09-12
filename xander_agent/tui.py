@@ -395,6 +395,8 @@ class XanderApp(App[None]):
                 self.say("[dim]/talk <message>[/]", "dim")
                 return
             self._start_chat(argument)
+        elif kind == "new_project":
+            self._new_project(argument)
         elif kind == "command":
             self._composer_command(intent)
         else:
@@ -420,7 +422,7 @@ class XanderApp(App[None]):
             self.action_resume()
         elif name in {"/stop", "/cancel"}:
             self.action_cancel()
-        elif name == "/new":
+        elif name in {"/fresh", "/reset"}:
             self.action_new()
         elif name == "/clear":
             self.action_clear_feed()
@@ -455,7 +457,8 @@ class XanderApp(App[None]):
         lines += [f"  {escape(line)}" for line in command_help("core")]
         lines += [
             "  /history — recent missions here · /show <id> — one mission's evidence",
-            "  /todo [task] — list or pin a TODO · /pause /resume /stop /new /clear /desktop /values",
+            "  /todo [task] — list or pin a TODO · /todo run — work them one by one",
+            "  /pause /resume /stop /fresh /clear /desktop /values",
             "[bold]Keys[/]  shift+tab cycles ask/plan/build/yolo · ↑↓ composer history · "
             "mouse-select then ctrl+c copies · esc back to the composer · ctrl+q quits",
             "[bold]Plain language[/]  create/do/make… runs · a question gets an answer · "
@@ -551,6 +554,30 @@ class XanderApp(App[None]):
         if source != "typed":
             self.say(f"[dim]working on the {source}: {escape(_short(goal, 120))}[/]", "dim")
         self._dispatch(goal, self.mode if self.mode != "answer" else "implement")
+
+    def _new_project(self, argument: str) -> None:
+        """``/new-project name -- goal``: a numbered folder in XanderWorld, then work there."""
+
+        from .world import create_project, world_dir
+
+        name, _, goal = argument.partition("--")
+        name = name.strip()
+        if not name:
+            self.say(f"[dim]/new-project <name> [-- goal]  · projects live in {escape(str(world_dir()))}[/]", "dim")
+            return
+        if self.task_state == "running" or self._engine_busy:
+            self.say("[dim]finish or /stop the current work first[/]", "dim")
+            return
+        try:
+            project = create_project(name, goal.strip())
+        except OSError as exc:
+            self.say(f"[{_BAD}]couldn't create the project: {escape(str(exc))}[/]", "bad")
+            return
+        self.say(f"[dim]project → {escape(str(project))}[/]", "dim")
+        self._rebind_workspace(Intent(kind="chdir", argument=str(project)))
+        if goal.strip():
+            self._store_goal(goal.strip())
+        self.say_xander(f"{project.name} is ready. Tell me what to build first.")
 
     def _store_goal(self, argument: str) -> None:
         text = argument.strip()

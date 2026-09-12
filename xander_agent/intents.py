@@ -97,6 +97,14 @@ COMMANDS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec("/addtodo", "/addtodo <task>", "pin a TODO item for this workspace", "todo", takes_argument=True),
     CommandSpec(
+        "/new-project",
+        "/new-project <name> [-- goal]",
+        "start a numbered project folder in SPQR/XanderWorld and work there",
+        "new_project",
+        aliases=("/project", "/new"),
+        takes_argument=True,
+    ),
+    CommandSpec(
         "/talk",
         "/talk <message>",
         "speak with the selected clone",
@@ -104,23 +112,22 @@ COMMANDS: tuple[CommandSpec, ...] = (
         aliases=("/ask",),
         takes_argument=True,
     ),
-    # Interface-only shortcuts. They keep their existing behavior in the TUI.
-    CommandSpec("/activity", "/activity", "show the Activity view", "command", scope="tui"),
-    CommandSpec("/controls", "/controls", "show the Controls view", "command", scope="tui"),
-    CommandSpec("/evidence", "/evidence", "show the Evidence view", "command", scope="tui", aliases=("/proof",)),
-    CommandSpec("/history", "/history", "show the Mission Library", "command", scope="tui"),
-    CommandSpec("/xander", "/xander", "show the Xander view", "command", scope="tui"),
-    CommandSpec("/loop", "/loop", "toggle the loop rail", "command", scope="tui"),
-    CommandSpec("/todos", "/todos", "toggle the pinned-work panel", "command", scope="tui"),
+    # Interface-only shortcuts: everything prints into the one feed.
+    CommandSpec("/history", "/history", "recent missions in this workspace", "command", scope="tui", aliases=("/missions",)),
     CommandSpec(
-        "/todo", "/todo [task]", "pin a TODO, or toggle the panel", "command", scope="tui", takes_argument=True
+        "/show", "/show [id]", "one mission's evidence (default: the last)", "command", scope="tui",
+        aliases=("/evidence", "/proof"), takes_argument=True,
+    ),
+    CommandSpec(
+        "/todo", "/todo [task|run]", "list TODOs, pin one, or `run` them one by one", "command", scope="tui",
+        aliases=("/todos",), takes_argument=True,
     ),
     CommandSpec("/pause", "/pause", "pause the running mission", "command", scope="tui"),
     CommandSpec("/resume", "/resume", "resume the paused mission", "command", scope="tui"),
     CommandSpec("/stop", "/stop", "contest the running mission", "command", scope="tui"),
     CommandSpec("/cancel", "/cancel", "cancel the running mission", "command", scope="tui"),
-    CommandSpec("/new", "/new", "clear pending decisions and start fresh", "command", scope="tui"),
-    CommandSpec("/clear", "/clear", "clear the Activity log", "command", scope="tui"),
+    CommandSpec("/fresh", "/fresh", "clear pending decisions and start fresh", "command", scope="tui", aliases=("/reset",)),
+    CommandSpec("/clear", "/clear", "clear the feed", "command", scope="tui"),
     CommandSpec("/desktop", "/desktop", "take a local desktop screenshot", "command", scope="tui"),
     CommandSpec(
         "/set",

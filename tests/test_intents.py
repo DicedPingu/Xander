@@ -102,7 +102,7 @@ def test_interface_commands_resolve_as_commands() -> None:
     assert intent.kind == "command"
     assert intent.command == "/set"
     assert intent.argument == "mode plan"
-    assert parse_intent("/proof").command == "/evidence"
+    assert parse_intent("/proof").command == "/show"
     assert parse_intent("/todo write the README").kind == "command"
 
 

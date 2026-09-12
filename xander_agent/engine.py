@@ -613,6 +613,8 @@ class Engine:
                         self.task_store.save(task)
                         continue
             else:
+                for repaired in self._fill_argv(task, task.plan):
+                    self._emit(task, "plan", repaired, {})
                 if task.request.mode == "implement" and not task.request.acceptance_checks:
                     synthesized = self._synthesize_checks(task.plan)
                     if synthesized:
@@ -704,6 +706,7 @@ class Engine:
                 task.lesson = self._record_learning(task, selected_skills)
                 self.task_store.save(task)
                 self._leave_handoff(task)
+                self._leave_folder_map(task)
                 self._emit(task, "result", "goal verified", self._result_payload(task))
                 return task
 
@@ -1001,9 +1004,11 @@ class Engine:
             f"OPERATOR PREFERENCES: {json.dumps(self.memory.preference_lines())}\n"
             f"LOCAL EVIDENCE:\n{research.local_context[:16_000]}\n"
             f"DOCUMENTATION:\n{research.documentation[:8_000]}\n\n"
-            "Answer as the operator's capable partner: direct, concrete, under 250 "
-            "words, grounded in the evidence above. Recommend a next move when one "
-            "exists. Do not propose file edits — this is advice, not work.",
+            "Answer as the operator's capable partner: direct, concrete, grounded in "
+            "the evidence above. Match the size of the message: a one-line remark or "
+            "complaint gets one or two sentences back, never a paragraph about process; "
+            "a real question gets what it needs, under 250 words. Recommend a next move "
+            "when one exists. Do not propose file edits — this is advice, not work.",
             role=role,
             think=False,
             timeout=min(300, task.request.timeout),
@@ -1131,6 +1136,11 @@ Rules:
 - Include at least one narrow deterministic acceptance check for implementation work.
 - OPERATOR PREFERENCES shape style, defaults, and phrasing; explicit CONSTRAINTS always outrank them.
 - Do not touch paths unrelated to the goal. Do not add dependencies or abstractions unless required.
+- Use what is installed: python3 with its standard library (urllib, html.parser, json, os, time), curl, and
+  plain coreutils. Never plan around selenium, requests, or any package that is not already on this machine;
+  "your own browser" means a headless fetch with urllib or curl, never the operator's browser.
+- A command that needs logic (loops, timing, parsing) is a small script: CREATE it, then a command action
+  runs it as ["python3","name.py"]. Never squeeze a program into a single command line.
 - `decision` names the single next move you chose, in one plain sentence the operator can read.
 - `why` says what evidence made that the best move over the alternative you rejected. Cite the local
   evidence, prior failure, or check that decided it; never restate the goal back as the reason.
@@ -1835,6 +1845,99 @@ Rules:
         return repaired
 
 
+    class _Argv(StrictModel):
+        argv: list[str] = Field(description="the exact executable and arguments, one string per element")
+
+    _RUN_FILE = re.compile(
+        r"\b(?:run|execute|start|launch|invoke)\b.{0,40}?(?P<file>[\w./-]+\.(?:py|sh|js|rb|pl))\b", re.IGNORECASE
+    )
+    _INTERPRETER_FOR = {".py": "python3", ".sh": "bash", ".js": "node", ".rb": "ruby", ".pl": "perl"}
+
+    def _deterministic_argv(self, wish: str) -> list[str]:
+        """``run fizzbuzz.py`` needs no model: the file names its interpreter."""
+
+        match = self._RUN_FILE.search(wish)
+        if not match:
+            return []
+        name = match.group("file")
+        interpreter = self._INTERPRETER_FOR.get(Path(name).suffix.lower())
+        return [interpreter, name] if interpreter else []
+
+    @staticmethod
+    def _sane_argv(argv: list[str]) -> bool:
+        """A command, not prose: short tokens, one line, no inline programs."""
+
+        if not argv or len(argv) > 24:
+            return False
+        if any("\n" in token or len(token) > 200 for token in argv):
+            return False
+        if any(token in {"|", "&&", "||", ";", ">", ">>", "<", "`"} for token in argv):
+            return False
+        if Path(argv[0]).name in {"python", "python3", "node", "ruby", "perl"} and any(
+            token in {"-c", "-e", "--eval"} for token in argv[1:]
+        ):
+            return False
+        return not any(marker in " ".join(argv) for marker in ("**", "ERROR", "```", "must not"))
+
+    def _fill_argv(self, task: TaskRecord, plan: ModelPlan | None) -> list[str]:
+        """Give an argv-less command step its command, in its own small generation.
+
+        The planner (a 9B build under a JSON schema) reliably decides *what*
+        a step does and unreliably fills the ``argv`` array — it describes the
+        command in ``expected`` and leaves argv empty. Rejecting the whole plan
+        for that omission lost three of five arena runs. A step that names a
+        script gets its interpreter deterministically; any other step that
+        says what it wants gets one focused call for the exact command, whose
+        answer must look like a command and not like prose. A step that says
+        nothing stays empty and the lint explains it. Returns log notes.
+        """
+
+        if plan is None:
+            return []
+        notes: list[str] = []
+        for action in plan.actions:
+            if action.kind not in {ActionKind.INSPECT, ActionKind.COMMAND} or action.argv or action.pipeline:
+                continue
+            wish = " ".join(f"{action.expected} {action.path}".split())
+            if not wish:
+                continue
+            argv = self._deterministic_argv(wish)
+            if argv:
+                action.argv = argv
+                notes.append(f"step '{wish[:60]}' → {' '.join(argv)}")
+                continue
+            prompt = f"""
+One step of a plan needs its exact shell command. Return the argv array only.
+
+WORKSPACE: {self.workspace}
+GOAL: {task.request.goal}
+THIS STEP MUST: {wish}
+STEP KIND: {action.kind.value} ({"read-only" if action.kind == ActionKind.INSPECT else "may change files"})
+FILES HERE: {", ".join(sorted(p.name for p in self.workspace.iterdir())[:40]) or "(empty)"}
+
+Rules:
+- argv is a list of short strings: executable first, then each argument separately. No shell
+  syntax (no pipes, redirects, &&), no inline programs (never python3 -c), no prose, no comments.
+- Only installed, ordinary tools: python3 (standard library), curl, ls, mv, mkdir, cp, cat, grep.
+  No pip installs, no selenium, no third-party packages.
+- Paths are relative to the workspace. Never leave the workspace.
+- Logic that a single command cannot express belongs in a script the plan creates first,
+  then this step runs it: ["python3", "watch.py"].
+""".strip()
+            try:
+                filled = self.backend.generate_model(prompt, self._Argv, role="coder", timeout=120)
+            except Exception as exc:
+                notes.append(f"could not derive a command for '{wish[:60]}': {type(exc).__name__}")
+                continue
+            self._record_model_stats(task, "coder")
+            argv = [str(token).strip() for token in filled.argv if str(token).strip()]
+            if not self._sane_argv(argv):
+                notes.append(f"rejected an unusable command for '{wish[:60]}'")
+                continue
+            action.argv = argv
+            notes.append(f"step '{wish[:60]}' → {' '.join(argv)[:120]}")
+        return notes
+
     def _fill_content(self, task: TaskRecord, action: Action) -> str:
         """Write a stubbed file for real, in its own generation.
 
@@ -1944,7 +2047,11 @@ Requirements:
                 )
             )
             if not patch:
-                return f"blocked: the coder made no change to {action.path}"
+                # The file already holds exactly what the coder would write.
+                # That is the goal met, not a failure to act.
+                action.kind = ActionKind.NOTE
+                action.content = f"{action.path} already holds the finished content"
+                return f"{action.path}: already correct, left as is"
             action.kind = ActionKind.PATCH
             action.patch = patch
             action.content = ""
@@ -2085,6 +2192,24 @@ Requirements:
                 task.evidence.append(
                     {"kind": "warning", "phase": task.phase, "message": f"event sink failed: {exc}"[:500]}
                 )
+
+    def _leave_folder_map(self, task: TaskRecord) -> None:
+        """A finished mission leaves a `.folder` map behind, once, never over the operator's."""
+
+        if task.status != TaskStatus.COMPLETED or task.request.mode != "implement":
+            return
+        try:
+            from .paths import agent_dir
+            from .world import ensure_folder_map
+
+            if self.workspace == agent_dir().resolve() or agent_dir().resolve() in self.workspace.parents:
+                return
+            written = ensure_folder_map(self.workspace, task.subject or task.request.goal[:80])
+        except Exception:
+            return
+        if written is not None:
+            task.evidence.append({"kind": "folder_map", "path": str(written)})
+            self._emit(task, "action", "left a .folder map of this workspace", {"path": str(written)})
 
     def _result_payload(self, task: TaskRecord) -> dict[str, Any]:
         return {
