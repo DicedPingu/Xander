@@ -1389,6 +1389,11 @@ Rules:
             for action in actions
             if self._action_hash(action) in completed_fingerprints
         }
+        # Every action ever run in this mission, by id: results outlive the
+        # plan that made them, and the coder needs the command behind a result.
+        if not hasattr(self, "_action_index"):
+            self._action_index: dict[str, Action] = {}
+        self._action_index.update({action.id: action for action in actions})
         index = 0
         while index < len(actions):
             # Safe point: between steps, with nothing in flight to corrupt.
@@ -1483,7 +1488,8 @@ Rules:
         return self.skills.load_selected(goal, limit=max(4, complexity * 2), max_chars=context_budget)
 
     _NAMED_OUTPUT = re.compile(
-        r"\b(?:to|into|in|as|called|named)\s+[\"'`]?(?P<file>[\w][\w.-]*\.(?:txt|md|json|csv|py|html|log|yaml|yml|toml))\b",
+        r"\b(?:to|into|in|as|called|named|write|create|save|produce|generate)\s+(?:a\s+|the\s+|an?\s+new\s+)?(?:file\s+)?"
+        r"[\"'`]?(?P<file>[\w][\w.-]*\.(?:txt|md|json|csv|py|html|log|yaml|yml|toml|rs|js|wat|wasm))\b",
         re.IGNORECASE,
     )
 
@@ -2395,12 +2401,14 @@ Rules:
         failed_here = bool(failed) and Path(action.path).name in failed
         # What the earlier steps found: a research file written without the
         # search results it was meant to hold is a stub, however well phrased.
+        index = getattr(self, "_action_index", {})
         gathered = "\n".join(
-            f"$ {' '.join(result_action.argv)}\n{result.stdout[-1500:]}"
-            for result in task.results[-8:]
-            if result.status == ActionStatus.OK and result.stdout.strip()
-            for result_action in [next((a for a in (task.plan.actions if task.plan else []) if a.id == result.action_id), None)]
-            if result_action is not None and result_action.argv
+            f"$ {' '.join(index[result.action_id].argv)}\n{result.stdout[-1500:]}"
+            for result in task.results[-10:]
+            if result.status == ActionStatus.OK
+            and result.stdout.strip()
+            and result.action_id in index
+            and index[result.action_id].argv
         )[-5000:]
         # The cards gear-up selected: the same reference the planner read.
         # A .wat file written from memory was wrong twice; written next to
