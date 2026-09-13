@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import json
 import re
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -35,7 +36,18 @@ from .models import (
     XanderRequest,
     utc_now,
 )
-from .policy import classify_risk, is_setup_action, neutral_intent_contract, snapshot_workspace
+from .policy import (
+    changed_paths,
+    classify_risk,
+    contains_secret_path,
+    is_setup_action,
+    neutral_intent_contract,
+    resolve_inside,
+    safe_environment,
+    sha256_file,
+    snapshot_workspace,
+    validate_allowed_paths,
+)
 from .quick import QuickOrder, parse_quick_order
 from .readiness import ToolReadiness, assess
 from .research import Researcher
@@ -450,6 +462,7 @@ class Engine:
         repeated_failures: dict[str, int] = {}
         discovery_hashes: set[str] = set()
         discovery_rounds = 0
+        inspected_paths = set()
         while task.attempt < attempt_limit:
             if time.monotonic() >= deadline:
                 task.failure = f"work budget exhausted after approximately {budget} seconds"
@@ -548,19 +561,26 @@ class Engine:
                 self._emit(task, "result", "plan complete", self._result_payload(task))
                 return task
             if task.request.autonomy == "proposal":
-                inspect_results = self._execute_actions(
-                    task, completed_fingerprints, only_inspect=True
-                )
-                task.results.extend(inspect_results)
-                task.status = TaskStatus.UNVERIFIED
-                task.failure = "proposal-only handoff; no mutations were applied"
-                self._phase(task, Phase.JUDGE_LOG, task.failure)
-                task.lesson = self._record_learning(task, selected_skills)
-                self.task_store.save(task)
-                self._emit(task, "result", "proposal ready", self._result_payload(task))
-                return task
-
+                self._repair_plan(task)
             discovery_only = task.request.mode == "implement" and self._is_discovery_plan(task.plan)
+            if (
+                task.request.autonomy == "proposal"
+                and discovery_only
+                and discovery_rounds >= self.MAX_DISCOVERY_ROUNDS
+                and len(task.request.allowed_paths) == 1
+            ):
+                try:
+                    target = resolve_inside(self.workspace, task.request.allowed_paths[0])
+                except (OSError, ValueError):
+                    target = None
+                if target in inspected_paths and target.is_file() and not contains_secret_path(target):
+                    relative = str(target.relative_to(self.workspace))
+                    task.plan.actions = [Action(kind=ActionKind.PATCH, path=relative, expected=task.request.goal)]
+                    task.plan.acceptance_checks = [AcceptanceCheck(
+                        name=f"proposal target exists: {relative}", argv=["test", "-f", relative],
+                    )]
+                    task.evidence.append({"kind": "proposal-discovery-fallback", "path": relative})
+                    discovery_only = False
             lint_failure = ""
             if discovery_only and discovery_rounds < self.MAX_DISCOVERY_ROUNDS:
                 discovery_hash = self._plan_hash(task.plan)
@@ -582,6 +602,17 @@ class Engine:
                     )
                     blocking_failure = self._blocking_failure(task, results)
                     if not blocking_failure:
+                        successful_ids = {result.action_id for result in results if result.status == ActionStatus.OK}
+                        for action in task.plan.actions:
+                            if (
+                                action.id in successful_ids and action.kind == ActionKind.INSPECT
+                                and len(action.argv) > 1 and action.cwd in {"", "."}
+                                and Path(action.argv[0]).name in {"cat", "sed", "head", "tail"}
+                            ):
+                                try:
+                                    inspected_paths.add(resolve_inside(self.workspace, action.argv[-1]))
+                                except (OSError, ValueError):
+                                    continue
                         discovery_rounds += 1
                         task.evidence.append(
                             {
@@ -625,7 +656,12 @@ class Engine:
                             {"checks": [check.model_dump(mode="json") for check in synthesized]},
                         )
                         self.task_store.save(task)
-                lint_failure = self._lint_plan(
+                if task.request.autonomy == "proposal":
+                    try:
+                        lint_failure = self._prepare_proposal(task)
+                    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                        lint_failure = f"proposal preparation failed: {type(exc).__name__}: {exc}"[:1000]
+                lint_failure = lint_failure or self._lint_plan(
                     task.plan,
                     require_execution=task.request.mode == "implement",
                     require_checks=(
@@ -642,7 +678,10 @@ class Engine:
                     results = []
                     blocking_failure = lint_failure
                 else:
-                    results = self._execute_actions(task, completed_fingerprints)
+                    results = self._execute_actions(
+                        task, completed_fingerprints,
+                        only_inspect=task.request.autonomy == "proposal",
+                    )
                     task.results.extend(results)
                     completed_fingerprints.update(
                         result.action_hash
@@ -651,6 +690,15 @@ class Engine:
                     )
                     blocking_failure = self._blocking_failure(task, results)
             self.task_store.save(task)
+
+            if task.request.autonomy == "proposal" and not blocking_failure:
+                task.status = TaskStatus.UNVERIFIED
+                task.failure = "proposal-only handoff; no mutations were applied; acceptance checks were not run"
+                self._phase(task, Phase.JUDGE_LOG, task.failure)
+                task.lesson = self._record_learning(task, selected_skills)
+                self.task_store.save(task)
+                self._emit(task, "result", "proposal ready", self._result_payload(task))
+                return task
 
             self._phase(task, Phase.TEST, "running explicit acceptance checks")
             checks = task.request.acceptance_checks or (task.plan.acceptance_checks if task.plan else [])
@@ -1848,7 +1896,27 @@ Rules:
             return []
         repaired: list[str] = []
         for action in task.plan.actions:
+            if (
+                task.request.autonomy == "proposal"
+                and action.kind == ActionKind.INSPECT
+                and not action.argv
+                and not action.pipeline
+                and action.path
+            ):
+                try:
+                    target = resolve_inside(self.workspace, action.path)
+                    validate_allowed_paths([target], self.workspace, task.request.allowed_paths)
+                except (OSError, ValueError):
+                    continue
+                if not contains_secret_path(target) and target.is_file() and target.stat().st_size <= 64_000:
+                    action.argv = ["sed", "-n", "1,200p", "--", str(target.relative_to(self.workspace))]
             if action.kind != ActionKind.PATCH or action.patch.strip():
+                continue
+            if action.content.lstrip().startswith(("diff --git ", "--- ")):
+                action.patch = action.content
+                action.content = ""
+                continue
+            if task.request.autonomy == "proposal":
                 continue
             if not action.path:
                 continue
@@ -1863,6 +1931,97 @@ Rules:
             action.content = ""  # the coder rewrites it from the file on disk
             repaired.append(action.path)
         return repaired
+
+    def _prepare_proposal(self, task):
+        if not task.plan:
+            return "no plan was produced"
+        patches = []
+        preimages = {}
+        selected = set(task.request.selected_options)
+        for action in task.plan.actions:
+            if action.option_id and action.option_id not in selected:
+                continue
+            if action.kind not in {ActionKind.PATCH, ActionKind.CREATE}:
+                continue
+            paths = changed_paths(action, self.workspace)
+            if action.path:
+                paths.append(resolve_inside(self.workspace, action.path))
+            validate_allowed_paths(paths, self.workspace, task.request.allowed_paths)
+            if any(contains_secret_path(path) for path in paths):
+                return "proposal targets a secret or credential path"
+            if action.kind == ActionKind.PATCH and not action.patch.strip():
+                if action.content.lstrip().startswith(("diff --git ", "--- ")):
+                    action.patch = action.content
+                    action.content = ""
+                else:
+                    if not action.path:
+                        return "empty proposal patch has no target path"
+                    target = resolve_inside(self.workspace, action.path)
+                    if not target.is_file() or target.stat().st_size > 64_000:
+                        return f"proposal needs a bounded existing target: {action.path}"
+                    relative = str(target.relative_to(self.workspace))
+                    before = sha256_file(target)
+                    if relative in action.preimage_hashes and action.preimage_hashes[relative] != before:
+                        return f"proposal preimage changed for {relative}"
+                    action.preimage_hashes[relative] = before
+                    prompt = (
+                        "Return only an applicable unified diff with a/ and b/ paths, exact context "
+                        "and correct hunk counts. No prose or fences. Make the smallest requested edit.\n"
+                        f"FILE: {action.path}\nGOAL: {task.request.goal}\n"
+                        f"CHANGE: {action.expected}\nCONSTRAINTS: {json.dumps(task.effective_constraints[:8])}\n"
+                        f"CURRENT FILE:\n{target.read_text(encoding='utf-8')}"
+                    )
+                    action.patch = self._unfence(str(self.backend.generate(
+                        prompt, role="coder", think=False, timeout=min(300, task.request.timeout)
+                    )))
+                    self._record_model_stats(task, "coder")
+            note = self._fill_content(task, action)
+            if note.startswith("blocked:"):
+                return note
+            if action.kind == ActionKind.CREATE:
+                if not action.path:
+                    return "proposal create has no target path"
+                target = resolve_inside(self.workspace, action.path)
+                if target.exists():
+                    return f"proposal create target already exists: {action.path}"
+                if not action.content:
+                    continue
+                action.patch = "".join(difflib.unified_diff(
+                    [], action.content.splitlines(keepends=True),
+                    fromfile="/dev/null", tofile=f"b/{action.path}",
+                ))
+                action.kind = ActionKind.PATCH
+                action.content = ""
+            if action.kind != ActionKind.PATCH:
+                continue
+            paths = changed_paths(action, self.workspace)
+            if not action.patch.strip() or not paths:
+                return "proposal patch has no applicable body or affected paths"
+            validate_allowed_paths(paths, self.workspace, task.request.allowed_paths)
+            if any(contains_secret_path(path) for path in paths):
+                return "proposal targets a secret or credential path"
+            for path in paths:
+                relative = str(path.relative_to(self.workspace))
+                actual = sha256_file(path)
+                if relative in action.preimage_hashes and action.preimage_hashes[relative] != actual:
+                    return f"proposal preimage changed for {relative}"
+                action.preimage_hashes[relative] = actual
+                preimages[relative] = actual
+            patches.append(action.patch)
+        if patches:
+            check = subprocess.run(
+                ["git", "apply", "--check", "--whitespace=nowarn", "-"],
+                input="".join(patches), cwd=self.workspace, env=safe_environment(),
+                capture_output=True, text=True, timeout=60, check=False,
+            )
+            if check.returncode:
+                return f"proposal patch check failed: {check.stderr[:1000]}"
+            task.evidence.append({
+                "kind": "proposal-validation", "applicable": True,
+                "patches": len(patches), "preimage_hashes": preimages,
+                "acceptance_checks_run": False,
+            })
+        return ""
 
 
     class _Argv(StrictModel):

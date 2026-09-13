@@ -3,6 +3,7 @@
 - [ ] Arena: fizzbuzz / hidden-browser / watch-folder must pass on the chosen model. Then add
       scenarios for: patching an existing file, a multi-file project, reading a URL and summarizing,
       clicking in the operator's Chrome (bridge), self-improvement round trip.
+- [ ] Make him fully capable of browsing the web in the background.
 - [ ] Model: qwenpaw-9b-heretic stays main. qwen3.5-9b-ultra-heretic (4/100 refusals) is installed but
       returns plans with ZERO actions under the JSON schema (0/4 arena, 2/3 probe runs) — unusable as
       planner until the plan schema is simplified for it. Pull Qwythos-9B (11/100, KL 0.012, tool-tuned)
@@ -14,7 +15,12 @@
 - [ ] Durable resume: kill mid-write / mid-check / at approval and recover without duplicate effects (§11).
 - [ ] Self-update: stage → verify in a fresh process → restart at a safe boundary; rollback restores
       only his own changes (§7).
+      - [ ] Update the TUI or what ever is updated on the spot after a upgrade has been tested and approved.
+- [ ] Improved what he writes to me.
 - [ ] Log everything relevant, once; keep the plain log twin readable.
+- [ ] Make Xander run in the background, with a symbol down to the right, the TUI is just a way to interact with the superviser, and any agents that are put on an unfinished task.
+- [ ] Typing "?" into the message window should display shortcuts and such, also autocomplete suggested commands that might change according to which are used, (remember that new ones can be invented on the spot) when starting with the "/".
+- [ ] Give him more features, another window where I can see more details++
 
 DONE
 - 2026-09-12  /new-project → SPQR/XanderWorld/NNN - name/ with a .folder; every finished mission leaves a .folder

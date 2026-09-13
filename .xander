@@ -52,14 +52,3 @@ supposed to be. `.todo` says what is next. `.changes` says who changed what. `.f
 - Model: `qwenpaw-9b-heretic` for every role; `qwen3.5-9b-ultra-heretic` (4/100 refusals)
   under benchmark as its replacement.
 - Interface: single view. Tabs, the loop rail, the controls form are gone.
-
-## First practical missions, in order
-
-Project folder: `SPQR/WASP/progress/` (create a `.folder` there first).
-1. Make **XanderAIHub** on GitHub look professional: a suitable image, bio, honest README.
-2. Sign in as **TheXander** on Codewars, pick a **3 kyu Python** kata; improve the profile where useful.
-3. Solve and test that kata.
-4. Submit the verified solution and confirm the site's result.
-5. Build a basic **Android-only Codewars app** (sign in, find kata, solve, submit) with a verified APK.
-
-Passwords live in an authenticated session or a credential store, never in this file.

@@ -1,4 +1,7 @@
+import difflib
+import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -99,6 +102,163 @@ def test_resume_authority_is_monotonic_and_never_mutates_in_proposal_mode(
     assert task_store.load(task.id).request.autonomy == "proposal"
     assert result["task"]["status"] == TaskStatus.UNVERIFIED
     assert not (workspace / "resume-marker.txt").exists()
+
+
+@pytest.mark.parametrize("payload", ["missing", "content", "create"])
+def test_proposal_resume_returns_applicable_diff_without_running_checks(tmp_path, payload):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    before = "# Guide\n\nOld command\n" + "Keep this documentation.\n" * 300
+    if payload == "create":
+        before = "Old command\n"
+    after = before.replace("Old command", "New command")
+    (workspace / "README.md").write_text(before)
+    patch = "".join(difflib.unified_diff(
+        before.splitlines(keepends=True), after.splitlines(keepends=True),
+        fromfile="a/README.md", tofile="b/README.md",
+    ))
+
+    class Coder(UnusedBackend):
+        def generate(self, prompt, **kwargs):
+            assert before in prompt
+            return patch
+
+    task_store = TaskStore(root=tmp_path / "tasks")
+    task = make_waiting_task(task_store, workspace, autonomy="proposal")
+    task.request.goal = "Correct the documented command"
+    task.request.allowed_paths = ["README.md"]
+    task.plan.actions = [Action(
+        kind=ActionKind.CREATE if payload == "create" else ActionKind.PATCH,
+        path="README.md", content=after if payload == "create" else patch if payload == "content" else "",
+        expected="Replace Old command with New command",
+    )]
+    task.plan.acceptance_checks = [AcceptanceCheck(
+        name="must remain pending", argv=["touch", "checks-were-run"],
+    )]
+    task_store.save(task)
+    engine = make_engine(workspace, task_store, autonomy="proposal", backend=Coder())
+
+    result = engine.resume(task.id)["task"]
+
+    assert result["status"] == TaskStatus.UNVERIFIED
+    assert result["check_results"] == []
+    assert (workspace / "README.md").read_text() == before
+    assert not (workspace / "checks-were-run").exists()
+    proposed = result["plan"]["actions"][0]
+    assert proposed["kind"] == "patch"
+    assert proposed["patch"] == patch
+    assert proposed["preimage_hashes"] == {"README.md": hashlib.sha256(before.encode()).hexdigest()}
+    assert any(item["kind"] == "proposal-validation" for item in result["evidence"])
+    applied = subprocess.run(
+        ["git", "apply", "-"], input=proposed["patch"], cwd=workspace,
+        text=True, capture_output=True, check=False,
+    )
+    assert applied.returncode == 0, applied.stderr
+    assert (workspace / "README.md").read_text() == after
+
+
+@pytest.mark.parametrize("failure", ["bad-context", "allowlist", "escape", "secret", "preimage", "inspection"])
+def test_invalid_proposal_never_reports_ready_or_mutates(tmp_path, failure):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("current\n")
+    task_store = TaskStore(root=tmp_path / "tasks")
+    task = make_waiting_task(task_store, workspace, autonomy="proposal")
+    task.request.goal = "Correct the documented command"
+    path = "../outside.txt" if failure == "escape" else ".env" if failure == "secret" else "README.md"
+    patch = f"--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-{'wrong' if failure == 'bad-context' else 'current'}\n+changed\n"
+    task.plan.actions = [Action(kind=ActionKind.PATCH, path=path, patch=patch)]
+    if failure == "allowlist":
+        task.request.allowed_paths = ["other.md"]
+    if failure == "preimage":
+        task.plan.actions[0].preimage_hashes = {"README.md": "stale"}
+    if failure == "inspection":
+        task.plan.actions.insert(0, Action(kind=ActionKind.INSPECT, argv=["README.md"]))
+    task_store.save(task)
+    engine = make_engine(workspace, task_store, autonomy="proposal")
+    events = []
+    engine.event_sink = events.append
+
+    result = engine.resume(task.id)["task"]
+
+    assert result["status"] != TaskStatus.COMPLETED
+    assert not any(event.message == "proposal ready" for event in events)
+    assert result["check_results"] == []
+    assert (workspace / "README.md").read_text() == "current\n"
+    assert not (tmp_path / "outside.txt").exists()
+
+
+@pytest.mark.parametrize("path_only", [False, True, "repeated"])
+def test_proposal_discovery_replans_using_real_inspection(tmp_path, monkeypatch, path_only):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("current\n")
+    task_store = TaskStore(root=tmp_path / "tasks")
+    task = make_waiting_task(task_store, workspace, autonomy="proposal")
+    task.request.goal = "Correct the documented command"
+    task.request.allowed_paths = ["README.md"]
+    task.plan.actions = [Action(
+        kind=ActionKind.INSPECT, path="README.md",
+        argv=[] if path_only else ["cat", "README.md"],
+    )]
+    task.plan.acceptance_checks = []
+    task_store.save(task)
+    patch = "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-current\n+changed\n"
+
+    class Coder(UnusedBackend):
+        def generate(self, prompt, **kwargs):
+            assert "CURRENT FILE:\ncurrent\n" in prompt
+            return patch
+
+    engine = make_engine(workspace, task_store, autonomy="proposal", backend=Coder())
+
+    def plan_from_evidence(task, skills, failure=""):
+        assert "DISCOVERY COMPLETE" in failure
+        assert task.results[-1].stdout == "current\n"
+        if path_only == "repeated":
+            return ModelPlan(summary="Read again", actions=[Action(kind=ActionKind.INSPECT, path="README.md")])
+        return ModelPlan(
+            summary="Update the inspected command",
+            actions=[Action(kind=ActionKind.PATCH, path="README.md", patch=(
+                "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-current\n+changed\n"
+            ))],
+            acceptance_checks=[AcceptanceCheck(name="documentation exists", argv=["test", "-f", "README.md"])],
+        )
+
+    monkeypatch.setattr(engine, "_plan", plan_from_evidence)
+    result = engine.resume(task.id)["task"]
+
+    assert result["attempt"] == 2
+    assert any(item["kind"] == "proposal-validation" for item in result["evidence"])
+    if path_only == "repeated":
+        assert any(item["kind"] == "proposal-discovery-fallback" for item in result["evidence"])
+    assert (workspace / "README.md").read_text() == "current\n"
+    applied = subprocess.run(
+        ["git", "apply", "-"], input=result["plan"]["actions"][0]["patch"],
+        cwd=workspace, text=True, capture_output=True, check=False,
+    )
+    assert applied.returncode == 0, applied.stderr
+    assert (workspace / "README.md").read_text() == "changed\n"
+
+
+@pytest.mark.parametrize("target", ["../outside", ".env", "other.md", "large.md", "missing.md"])
+def test_proposal_path_only_inspection_repair_preserves_boundaries(tmp_path, target):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (tmp_path / "outside").write_text("private\n")
+    (workspace / ".env").write_text("private\n")
+    (workspace / "other.md").write_text("unselected\n")
+    (workspace / "large.md").write_text("x" * 64_001)
+    task_store = TaskStore(root=tmp_path / "tasks")
+    task = make_waiting_task(task_store, workspace, autonomy="proposal")
+    task.request.allowed_paths = ["README.md", ".env", "large.md", "missing.md"]
+    action = Action(kind=ActionKind.INSPECT, path=target)
+    task.plan.actions = [action]
+    engine = make_engine(workspace, task_store, autonomy="proposal")
+
+    engine._repair_plan(task)
+
+    assert action.argv == []
 
 
 def test_task_list_and_show_are_scoped_to_the_engine_workspace(tmp_path: Path) -> None:
