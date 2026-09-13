@@ -278,6 +278,22 @@ def test_dependencies_named_by_path_resolve_to_the_creating_step() -> None:
     assert plan.actions[2].depends_on == ["one"], "unknown labels are dropped, known ones map to ids"
 
 
+def test_commands_the_order_names_become_checks_the_planner_cannot_drop() -> None:
+    goal = (
+        "Make a cargo project, build it with cargo build, run cargo test, then run it on sample.txt. "
+        "Also run python3 snake.py --demo and run node run.js."
+    )
+    assert Engine._goal_commands(goal) == [["cargo", "test"], ["python3", "snake.py", "--demo"], ["node", "run.js"]]
+    plan = ModelPlan(
+        summary="x",
+        actions=[Action(kind=ActionKind.CREATE, path="a.txt", content="a\n")],
+        acceptance_checks=[AcceptanceCheck(name="build", argv=["cargo", "build"])],
+    )
+    added = Engine._synthesize_checks(plan, goal)
+    assert [c.argv for c in added] == [["cargo", "test"], ["python3", "snake.py", "--demo"], ["node", "run.js"]]
+    assert all(c.required for c in added)
+
+
 def test_unified_patch_marks_missing_final_newlines_the_way_git_does(tmp_path: Path) -> None:
     import subprocess
 

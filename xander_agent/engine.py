@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import json
 import re
+import shlex
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -132,6 +133,7 @@ class Engine:
         self._voice = Commentator(voice="off")
         self._squad = Squad(helpers=[])
         self._gear: list[dict[str, str]] = []
+        self._last_failures: list[ActionResult] = []  # failed checks of the previous attempt
 
     def execute(
         self,
@@ -759,6 +761,7 @@ class Engine:
                 planning_failure = f"planner output was unusable: {type(exc).__name__}: {exc}"[:1000]
                 task.failure = planning_failure
                 task.plan = None
+                self._last_failures = [r for r in task.check_results if r.status != ActionStatus.OK]
                 task.check_results = []
                 reuse_existing_plan = False
                 self.task_store.save(task)
@@ -785,6 +788,7 @@ class Engine:
             # skipped this and hit "patch without a unified patch body" twice.
             for path in self._repair_plan(task):
                 self._emit(task, "action", f"will rewrite {path} instead of patching it", {})
+            self._last_failures = [r for r in task.check_results if r.status != ActionStatus.OK]
             task.check_results = []
             reuse_existing_plan = True
             resume = True
@@ -1486,6 +1490,34 @@ Rules:
 
         return list(dict.fromkeys(m.group("file") for m in cls._NAMED_OUTPUT.finditer(goal)))
 
+    _NAMED_COMMAND = re.compile(
+        r"\b(?:run|execute)\s+(?P<cmd>(?:cargo|python3?|pytest|node|npm|pnpm|go|make|bash|sh|dart|flutter|wat2wasm|rustc)\b"
+        r"(?:[^,.;\n]|\.(?=\w))*?)(?=\s*(?:[,;]|\.(?!\w)|\bthen\b|\band\b|$))",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _goal_commands(cls, goal: str) -> list[list[str]]:
+        """Commands the sentence itself names as the proof: "run cargo test".
+
+        Observed 2026-09-13: after `cargo test` failed, the next plan quietly
+        dropped that check and "completed" on the remaining ones. A command
+        the operator wrote into the order is not the planner's to drop.
+        """
+
+        commands: list[list[str]] = []
+        for match in cls._NAMED_COMMAND.finditer(goal):
+            text = match.group("cmd").strip()
+            if re.search(r"\b(?:it|them|this|that)\b", text.split()[0] if text else ""):
+                continue
+            try:
+                argv = shlex.split(text)
+            except ValueError:
+                continue
+            if argv and argv not in commands and cls._sane_argv(argv):
+                commands.append(argv)
+        return commands
+
     @staticmethod
     def _synthesize_checks(plan: ModelPlan | None, goal: str = "") -> list[AcceptanceCheck]:
         """Derive proof from a plan that forgot to state any.
@@ -1507,6 +1539,12 @@ Rules:
             if label not in seen:
                 seen.add(label)
                 checks.append(AcceptanceCheck(name=label, argv=["test", "-e", name]))
+        existing_argv = [check.argv for check in plan.acceptance_checks]
+        for argv in Engine._goal_commands(goal):
+            label = f"the order says run: {' '.join(argv)}"
+            if label not in seen and argv not in existing_argv:
+                seen.add(label)
+                checks.append(AcceptanceCheck(name=label, argv=argv, timeout=900))
         if any(check.required for check in plan.acceptance_checks):
             plan.acceptance_checks = [*plan.acceptance_checks, *checks]
             return checks
@@ -1824,17 +1862,32 @@ Rules:
             return False, "no required acceptance checks were produced"
         by_id = {result.action_id: result for result in task.check_results}
         expected_ids = [f"check-{hashlib.sha256(check.name.encode()).hexdigest()[:8]}" for check in required]
+        # The failed check comes first, with its error line: "did not run" is
+        # only the consequence of an earlier failure, and a setback message
+        # that never changes hides the progress each attempt actually made.
+        failed = [
+            f"{check.name} — {Engine._check_detail(by_id[action_id])}"
+            for check, action_id in zip(required, expected_ids)
+            if action_id in by_id and by_id[action_id].status != ActionStatus.OK
+        ]
+        if failed:
+            return False, "required checks failed: " + "; ".join(failed)
         missing = [check.name for check, action_id in zip(required, expected_ids) if action_id not in by_id]
         if missing:
             return False, "required checks did not run: " + ", ".join(missing)
-        failed = [
-            check.name
-            for check, action_id in zip(required, expected_ids)
-            if by_id[action_id].status != ActionStatus.OK
-        ]
-        if failed:
-            return False, "required checks failed: " + ", ".join(failed)
         return True, ""
+
+    @staticmethod
+    def _check_detail(result: ActionResult) -> str:
+        """The one line of a failed check's output that says why."""
+
+        text = "\n".join(part for part in (result.reason, result.stdout, result.stderr) if part)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for pattern in ("panicked at", "AssertionError", "assert", "Error", "error", "FAILED", "failed"):
+            hit = next((line for line in lines if pattern in line), "")
+            if hit:
+                return hit[:160]
+        return (lines[-1] if lines else f"exit {result.returncode}")[:160]
 
     def _failure_context(self, task: TaskRecord) -> str:
         rows = []
@@ -2169,6 +2222,17 @@ Rules:
             notes.append(f"step '{wish[:60]}' → {' '.join(argv)[:120]}")
         return notes
 
+    @staticmethod
+    def _is_technical_card(item: dict[str, Any]) -> bool:
+        """Cards about a technology help the coder; cards about how to work
+        (the task loop, experience hubs) only get copied into files."""
+
+        name = str(item.get("name") or "").casefold()
+        group = str(item.get("group") or item.get("category") or "").casefold()
+        if group in {"core-workflow", "uncategorized", "code-quality", "research-analysis"}:
+            return False
+        return not any(word in name for word in ("task-loop", "workflow", "experience", "instinct", "skill-library"))
+
     def _cut_off(self) -> bool:
         """Did the last generation stop because it ran out of tokens?"""
 
@@ -2264,11 +2328,16 @@ Rules:
         # What went wrong last time is the one thing a rewrite must know.
         # Without it the coder produced the same invalid file three times.
         failed = ""
-        if task.failure or task.results:
+        if task.failure or task.results or task.check_results:
+            # The build error is usually in a failed *check*, not an action.
             tail = next(
                 (
-                    (result.stderr or result.reason or result.stdout)[-1200:]
-                    for result in reversed(task.results)
+                    "\n".join(p for p in (result.reason, result.stdout[-700:], result.stderr[-500:]) if p)
+                    for result in [
+                        *reversed(task.check_results),
+                        *reversed(getattr(self, "_last_failures", [])),
+                        *reversed(task.results),
+                    ]
                     if result.status != ActionStatus.OK and (result.stderr or result.reason or result.stdout)
                 ),
                 "",
@@ -2283,10 +2352,10 @@ Rules:
         # A .wat file written from memory was wrong twice; written next to
         # the canonical module it is right.
         cards = "\n\n".join(
-            f"SKILL {item.get('name')}:\n{str(item.get('content') or '')[:2500]}"
-            for item in list(getattr(self, "_gear", []))[:2]
-            if item.get("content")
-        )
+            f"CARD {item.get('name')}:\n{str(item.get('content') or '')[:2500]}"
+            for item in list(getattr(self, "_gear", []))
+            if item.get("content") and self._is_technical_card(item)
+        )[:5000]
         prompt = f"""
 Write the complete, finished contents of one file. Output the file body and nothing else:
 no prose, no explanation, no markdown fence.
@@ -2299,7 +2368,7 @@ PLANNER SKETCH (a hint only — replace it with the real thing):
 {existing[:1200]}
 {current}
 {failed}
-{("REFERENCE (follow these forms exactly):" + chr(10) + cards) if cards else ""}
+{("REFERENCE CARDS — examples of correct forms for this technology. They are notes, not the file; never copy a card's text or its --- header into the file:" + chr(10) + cards) if cards else ""}
 
 Requirements:
 - Real, working, complete code. Never a stub, placeholder, TODO, or "code goes here".
