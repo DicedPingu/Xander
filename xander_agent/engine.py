@@ -1874,7 +1874,39 @@ Rules:
                     f"{name} is a placeholder ({len(lines)} line(s), starts {text.strip()[:60]!r}); "
                     "the order wants its real content, written from the evidence gathered"
                 )
+            unproven = self._unproven_urls(task, text)
+            if unproven:
+                return (
+                    f"{name} names {len(unproven)} URL(s) that appear in no evidence gathered by this mission: "
+                    + ", ".join(unproven[:4])
+                    + ". Write only what the searches actually returned; search again if they returned too little."
+                )
         return ""
+
+    _URL = re.compile(r"https?://[^\s)>\]\"']+")
+
+    def _unproven_urls(self, task: TaskRecord, text: str) -> list[str]:
+        """URLs in an output that no command of this mission ever printed.
+
+        A 9B build asked for eight repositories writes eight plausible URLs
+        from memory (two of seven were 404 on 2026-09-13) even with the real
+        search results in front of it. Provenance is checked, not requested.
+        """
+
+        urls = list(dict.fromkeys(url.rstrip(".,;:") for url in self._URL.findall(text)))
+        if not urls:
+            return []
+        evidence = "\n".join(result.stdout for result in task.results if result.stdout).casefold()
+        if not evidence.strip():
+            return []  # nothing was gathered; nothing can be checked
+        unproven = []
+        for url in urls:
+            key = url.casefold()
+            repo = re.match(r"https?://github\.com/([^/]+/[^/#?]+)", key)
+            token = repo.group(1).removesuffix(".git") if repo else key
+            if token not in evidence:
+                unproven.append(url)
+        return unproven
 
     def _ground_check_argv(self, argv: list[str], cwd: str = ".") -> list[str]:
         """`./wordfreq sample.txt` when the binary is at target/debug/wordfreq:
