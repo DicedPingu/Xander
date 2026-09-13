@@ -21,7 +21,8 @@
   - ~/SPQR/XanderGrounds cleaned to missions only; `000 - first drills/01..08` with the order and proof
     per subfolder (old contents in ~/SPQR/XanderGrounds.old-2026-09-12).
   Proven by: tests/ 385 passed; drills on qwenpaw: 08 fix-the-bug (2 attempts), 05 wasm (1), 02 read the
-  web (6), 03 python snake (1) completed; 04 rust builds+tests, 07 github, 06 own TUI: see .todo.
+  web (6), 03 python snake (1), 04 rust wordfreq (2), 07 github research (6; all 8 URLs resolve, all from his
+  own gh search output) completed; 01 needs the operator (sudo), 06 own TUI needs an edit action: see .todo.
 
 2026-09-12 · Claude Opus 5 (Claude Code) · branch worktree-discussion-first-commands
   - xander_agent/tui.py rewritten: one feed of selectable Static entries + one composer; no tabs, no

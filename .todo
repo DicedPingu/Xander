@@ -13,7 +13,7 @@
       06 own TUI /version (`xander self improve`) fails on "patch actions without a unified patch body":
       the 9B build cannot write a diff and intents.py/tui.py are too big to rewrite whole. Needs an
       `edit` action (search/replace blocks) in models/executor and the coder prompt.
-      02 web, 03 snake, 04 rust, 05 wasm, 08 fix-the-bug pass; 07 github: see .changes.
+      02 web, 03 snake, 04 rust, 05 wasm, 07 github research (8 real URLs), 08 fix-the-bug pass.
 - [ ] A compact machine map of any project (not human-readable) he can load instead of the code.
 - [ ] Deliver the first practical missions in `.xander` (GitHub profile, Codewars kata, Android app).
 - [ ] Bounded URL/repo crawling with provenance (research-2026-09-10.md §2) and a browser tool (§3).
