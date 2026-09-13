@@ -5,12 +5,14 @@ Run him:  xander            (terminal: one feed, one composer)
 
 .xander           what we want from him, his working agreement, what is still open   ← read first
 .todo             the short list of what to do next on him
+~/SPQR/XanderGrounds/   his training grounds: one mission folder per batch of tasks (000 - first drills)
 .changes          every AI that touches him signs what it changed here
 .folder           this map
 
 xander_agent/     the package. Everything he is.
   cli.py            entry point: every subcommand, plus invoke_engine() the TUI and MCP call
   tui.py            the terminal: feed + composer, ↑↓ history, mid-run messages, approvals, /commands
+  composer.py       what the composer knows while you type: the ? card, / suggestions ranked by use
   intents.py        first door for typed text: /command, order, question, discussion, venting, chdir
   quick.py          one-line orders (touch, mkdir, rename, write "x" to f, run `cmd`) done without a plan
   engine.py         the mission loop: analyze → research → plan → act → check → judge → learn

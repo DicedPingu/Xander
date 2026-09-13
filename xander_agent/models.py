@@ -226,7 +226,22 @@ class MissionGuide(StrictModel):
     updated_at: str = Field(default_factory=utc_now)
 
 
+def _plan_schema_requires_actions(schema: dict[str, Any]) -> None:
+    """The constrained-decoding grammar must force the `actions` and
+    `acceptance_checks` keys. With them optional, a 9B build under the
+    schema happily emits summary/decision/why and stops — a plan with no
+    plan (observed 2026-09-12: 36 tokens, zero actions, twice in a row)."""
+
+    required = list(schema.get("required") or [])
+    for key in ("actions", "acceptance_checks"):
+        if key not in required:
+            required.append(key)
+    schema["required"] = required
+
+
 class ModelPlan(StrictModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, json_schema_extra=_plan_schema_requires_actions)
+
     summary: str
     decision: str = ""
     why: str = ""
@@ -281,6 +296,7 @@ class XanderEvent(StrictModel):
         "result",
         "error",
         "voice",
+        "steering",
     ]
     timestamp: str = Field(default_factory=utc_now)
     phase: Phase | None = None

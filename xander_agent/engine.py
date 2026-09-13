@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -143,6 +144,8 @@ class Engine:
         self._written: list[dict[str, Any]] = []
         self._voice = Commentator(voice="off")
         self._squad = Squad(helpers=[])
+        self._gear: list[dict[str, str]] = []
+        self._last_failures: list[ActionResult] = []  # failed checks of the previous attempt
 
     def execute(
         self,
@@ -407,12 +410,22 @@ class Engine:
             self._emit(task, "result", "read-only task complete", self._result_payload(task))
             return task
 
-        self._phase(task, Phase.SET_UP, "loading only task-relevant skills, tools, and model depth")
+        self._phase(task, Phase.SET_UP, "gearing up: the skills, tools and model depth this order needs")
         selected_skills = self._select_gear(task.request.goal)
+        self._gear = selected_skills  # the coder reads the same cards as the planner
         readiness = self._readiness(task, [check.argv for check in task.request.acceptance_checks])
         task.tool_readiness = readiness.as_dict()
         task.evidence.append({"kind": "tool-readiness", **readiness.as_dict()})
         self._emit(task, "research", "mission tool preflight completed", readiness.as_dict())
+        if readiness.missing and not resume:
+            readiness = self._gear_up(task, readiness)
+        self._emit(
+            task,
+            "research",
+            self._gear_line(readiness, selected_skills),
+            {"gear": True, "tools": sorted(readiness.available), "missing": list(readiness.missing),
+             "skills": [item["name"] for item in selected_skills]},
+        )
         if readiness.missing and task.request.setup_policy != "allow":
             task.status = TaskStatus.WAITING_APPROVAL if task.request.setup_policy == "ask" else TaskStatus.UNVERIFIED
             task.failure = readiness.blocker()
@@ -461,6 +474,10 @@ class Engine:
         planning_failure = ""
         repeated_failures: dict[str, int] = {}
         discovery_hashes: set[str] = set()
+        # Every plan tried in this run. The screenshot loop alternated between
+        # two failing plans (A, B, A, B); comparing only with the previous one
+        # never noticed. A plan seen before is not a new approach.
+        seen_plan_hashes: set[str] = set()
         discovery_rounds = 0
         inspected_paths = set()
         while task.attempt < attempt_limit:
@@ -583,6 +600,8 @@ class Engine:
                     discovery_only = False
             lint_failure = ""
             if discovery_only and discovery_rounds < self.MAX_DISCOVERY_ROUNDS:
+                for repaired in self._fill_argv(task, task.plan):
+                    self._emit(task, "plan", repaired, {})
                 discovery_hash = self._plan_hash(task.plan)
                 if discovery_hash in discovery_hashes:
                     lint_failure = "invalid plan: planner repeated the same discovery slice"
@@ -668,7 +687,9 @@ class Engine:
                         task.request.mode == "implement"
                         and not task.request.acceptance_checks
                     ),
-                )
+                ) or self._phantom_failure(task.plan)
+                if task.plan is not None:
+                    seen_plan_hashes.add(self._plan_hash(task.plan))
                 if discovery_only and discovery_rounds >= self.MAX_DISCOVERY_ROUNDS:
                     lint_failure = (
                         "invalid plan: discovery budget exhausted; the next plan must make the "
@@ -720,7 +741,7 @@ class Engine:
                 )
 
             self._phase(task, Phase.JUDGE_LOG, "independent deterministic judgment")
-            success, failure = self._judge(task, checks, blocking_failure)
+            success, failure = self._judge(task, checks, blocking_failure or self._stub_output_failure(task))
             if success and self._squad.master:
                 verdict = self._delegate(
                     task,
@@ -788,14 +809,15 @@ class Engine:
                 planning_failure = f"planner output was unusable: {type(exc).__name__}: {exc}"[:1000]
                 task.failure = planning_failure
                 task.plan = None
+                self._last_failures = [r for r in task.check_results if r.status != ActionStatus.OK]
                 task.check_results = []
                 reuse_existing_plan = False
                 self.task_store.save(task)
                 continue
             new_hash = self._plan_hash(new_plan)
             current_hash = self._plan_hash(task.plan)
-            if new_hash in {current_hash, previous_plan_hash} - {""}:
-                task.failure = "replanning repeated the same approach; stopped"
+            if new_hash in ({current_hash, previous_plan_hash} | seen_plan_hashes) - {""}:
+                task.failure = "replanning repeated the same approach as an earlier attempt; stopped"
                 break
             if current_hash and new_hash != current_hash:
                 change = {
@@ -809,6 +831,12 @@ class Engine:
                 self._emit(task, "logic_change", "approach changed after new evidence", change)
             previous_plan_hash = current_hash
             task.plan = new_plan
+            # The same repair the first plan gets: a body-less patch on a
+            # small existing file becomes a rewrite the coder fills. Replans
+            # skipped this and hit "patch without a unified patch body" twice.
+            for path in self._repair_plan(task):
+                self._emit(task, "action", f"will rewrite {path} instead of patching it", {})
+            self._last_failures = [r for r in task.check_results if r.status != ActionStatus.OK]
             task.check_results = []
             reuse_existing_plan = True
             resume = True
@@ -1192,6 +1220,24 @@ Rules:
 - Creating a script is not the goal; its result is. If the goal names an output (seen.txt, title.txt, a
   running program), the plan ends with the step that produces it, and the proof checks that output.
 - Scripts run unattended: never input(), never prompt, never wait for a key. Paths are known; hardcode them.
+- Name only files that LOCAL EVIDENCE lists or that an earlier action of this plan creates. A command
+  on a file that does not exist is rejected before anything runs. Never invent helper scripts to
+  remove, check or wrap something one command already does.
+- Removing or installing software: LOCAL EVIDENCE says how it is installed (dpkg/apt, snap, pip,
+  flatpak, a bare binary). Use that manager's own command, e.g. ["apt-get","purge","-y","name"] or
+  ["pip","uninstall","-y","name"]. Root and -y are added for you and the operator is asked once;
+  never write sudo yourself. Prove removal with ["test","!","-e","/usr/bin/name"] (the path
+  LOCAL EVIDENCE showed), never with a query that fails when the package is gone.
+- Compiled languages: a Rust program is a cargo project (["cargo","init","--name","x"] or CREATE
+  Cargo.toml + src/main.rs), built with ["cargo","build"] and proven with ["cargo","test"] or by
+  running the binary from target/debug/. WebAssembly from text: CREATE a .wat file, then
+  ["wat2wasm","name.wat","-o","name.wasm"], then run it from a small node script with WebAssembly.instantiate.
+- When a check fails inside a file that exists, the next plan fixes THAT file (CREATE with its full
+  corrected content). Never add a second file that does the same job, and never add a second test
+  file next to a failing one: one program, one test file, corrected in place.
+- `actions` is the plan. It is never empty in implement mode: at least the change and the proof.
+  Prose fields stay short (`summary` ≤ 20 words, `decision` ≤ 25, `why` ≤ 40, each `expected` ≤ 15)
+  so the room goes to `content`, `patch` and `argv`.
 - `decision` names the single next move you chose, in one plain sentence the operator can read.
 - `why` says what evidence made that the best move over the alternative you rejected. Cite the local
   evidence, prior failure, or check that decided it; never restate the goal back as the reason.
@@ -1225,12 +1271,114 @@ Rules:
         raw = self.backend.generate(prompt, role=role, schema=ModelPlan, think=False, timeout=task.request.timeout)
         self._record_model_stats(task, role)
         plan = ModelPlan.model_validate_json(raw)
+        self._resolve_dependencies(plan)
         if task.request.mode == "implement" and not plan.acceptance_checks and not task.request.acceptance_checks:
             plan.acceptance_checks = self._infer_checks(plan)
         return plan
 
+    @staticmethod
+    def _resolve_dependencies(plan: ModelPlan) -> None:
+        """`depends_on: ["add.wat"]` means the step that creates add.wat.
+
+        The planner names dependencies by path or label as often as by id.
+        A label that matches an earlier action's path, id or expected text
+        becomes that id; anything else is dropped, because actions run in
+        listed order anyway and an unresolvable label only blocks the step.
+        """
+
+        seen: list[Action] = []
+        for action in plan.actions:
+            resolved: list[str] = []
+            for label in action.depends_on:
+                key = label.strip().casefold()
+                if not key:
+                    continue
+                match = next(
+                    (
+                        earlier
+                        for earlier in seen
+                        if key in {earlier.id.casefold(), earlier.path.casefold(), earlier.expected.casefold()}
+                        or (earlier.path and key.endswith(earlier.path.casefold()))
+                    ),
+                    None,
+                )
+                if match is not None and match.id not in resolved:
+                    resolved.append(match.id)
+            action.depends_on = resolved
+            seen.append(action)
+
     def _readiness(self, task: TaskRecord, commands: Sequence[Sequence[str]] = ()) -> ToolReadiness:
         return assess(task.request.goal, self.workspace, commands, brain=getattr(self.backend, "doctor", None))
+
+    def _gear_up(self, task: TaskRecord, readiness: ToolReadiness) -> ToolReadiness:
+        """Upgrade himself for this order before the first action.
+
+        Analysis said what the order needs; if a tool is not on the machine
+        he gets it now, deterministically, instead of hoping the planner
+        remembers to. Each install goes through the executor, so root and
+        package policy still ask the operator (or the ``--yes`` / setup
+        policy already given). Returns the readiness after the attempt.
+        """
+
+        if not readiness.missing or not task.snapshot:
+            return readiness
+        policy = task.request.setup_policy
+        if policy == "never" or (policy == "ask" and self.approve is None):
+            return readiness
+        executor = ActionExecutor(
+            self.workspace,
+            task.snapshot,
+            autonomy=task.request.autonomy,
+            allowed_paths=task.request.allowed_paths,
+            approve=self._approve(task),
+            default_timeout=min(task.request.timeout, 1_200),
+        )
+        import shlex
+
+        installed: list[str] = []
+        for need in readiness.needs:
+            if need.name not in readiness.missing:
+                continue
+            for suggestion in need.install:
+                try:
+                    argv = shlex.split(suggestion)
+                except ValueError:
+                    continue
+                if not argv or argv[0] in {"install", "ollama"} or "`" in suggestion:
+                    continue  # prose ("install or enable `x`"), not a command
+                action = Action(kind=ActionKind.COMMAND, argv=argv, expected=f"install {need.name}", blocking=False)
+                self._emit(task, "action", f"upgrading myself: {need.name} via {' '.join(argv)}", {"action": action.model_dump(mode="json")})
+                result = executor.run(action)
+                task.results.append(result)
+                self._emit(task, "action", result.status, {"result": result.model_dump(mode="json")})
+                if result.status == ActionStatus.OK:
+                    installed.append(need.name)
+                    break
+        if installed:
+            task.evidence.append({"kind": "gear_up", "installed": installed})
+            self._emit(
+                task,
+                "voice",
+                "upgraded myself for this order: installed " + ", ".join(installed),
+                {"moment": "gear", "speaker": self._voice.speaker},
+            )
+        after = self._readiness(task, [check.argv for check in task.request.acceptance_checks])
+        task.tool_readiness = after.as_dict()
+        self.task_store.save(task)
+        return after
+
+    @staticmethod
+    def _gear_line(readiness: ToolReadiness, skills: Sequence[dict[str, str]]) -> str:
+        tools = sorted(readiness.available)
+        parts = []
+        if tools:
+            parts.append("tools " + ", ".join(tools[:8]))
+        names = [str(item.get("name")) for item in skills if item.get("name")]
+        if names:
+            parts.append("skills " + ", ".join(names[:5]))
+        if readiness.missing:
+            parts.append("still missing " + ", ".join(readiness.missing))
+        return "geared up: " + (" · ".join(parts) if parts else "nothing extra needed")
 
     @staticmethod
     def _infer_checks(plan: ModelPlan) -> list[AcceptanceCheck]:
@@ -1254,7 +1402,11 @@ Rules:
         problems, and any counter keyed on the raw string would never notice.
         """
 
-        return re.sub(r"\d+", "#", str(failure or "").strip().casefold())[:300]
+        text = str(failure or "").strip().casefold()
+        # Action ids are fresh every plan; "validation action before first
+        # mutation: d598ba203f4b" is one wall, not twelve.
+        text = re.sub(r"\b[0-9a-f]{12}\b", "#", text)
+        return re.sub(r"\d+", "#", text)[:300]
 
     def _execute_actions(
         self,
@@ -1285,6 +1437,11 @@ Rules:
             for action in actions
             if self._action_hash(action) in completed_fingerprints
         }
+        # Every action ever run in this mission, by id: results outlive the
+        # plan that made them, and the coder needs the command behind a result.
+        if not hasattr(self, "_action_index"):
+            self._action_index: dict[str, Action] = {}
+        self._action_index.update({action.id: action for action in actions})
         index = 0
         while index < len(actions):
             # Safe point: between steps, with nothing in flight to corrupt.
@@ -1379,7 +1536,8 @@ Rules:
         return self.skills.load_selected(goal, limit=max(4, complexity * 2), max_chars=context_budget)
 
     _NAMED_OUTPUT = re.compile(
-        r"\b(?:to|into|in|as|called|named)\s+[\"'`]?(?P<file>[\w][\w.-]*\.(?:txt|md|json|csv|py|html|log|yaml|yml|toml))\b",
+        r"\b(?:to|into|in|as|called|named|write|create|save|produce|generate)\s+(?:a\s+|the\s+|an?\s+new\s+)?(?:file\s+)?"
+        r"[\"'`]?(?P<file>[\w][\w.-]*\.(?:txt|md|json|csv|py|html|log|yaml|yml|toml|rs|js|wat|wasm))\b",
         re.IGNORECASE,
     )
 
@@ -1388,6 +1546,34 @@ Rules:
         """Files the sentence itself promises: "write … to seen.txt" must leave seen.txt."""
 
         return list(dict.fromkeys(m.group("file") for m in cls._NAMED_OUTPUT.finditer(goal)))
+
+    _NAMED_COMMAND = re.compile(
+        r"\b(?:run|execute)\s+(?P<cmd>(?:cargo|python3?|pytest|node|npm|pnpm|go|make|bash|sh|dart|flutter|wat2wasm|rustc)\b"
+        r"(?:[^,.;\n]|\.(?=\w))*?)(?=\s*(?:[,;]|\.(?!\w)|\bthen\b|\band\b|$))",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _goal_commands(cls, goal: str) -> list[list[str]]:
+        """Commands the sentence itself names as the proof: "run cargo test".
+
+        Observed 2026-09-13: after `cargo test` failed, the next plan quietly
+        dropped that check and "completed" on the remaining ones. A command
+        the operator wrote into the order is not the planner's to drop.
+        """
+
+        commands: list[list[str]] = []
+        for match in cls._NAMED_COMMAND.finditer(goal):
+            text = match.group("cmd").strip()
+            if re.search(r"\b(?:it|them|this|that)\b", text.split()[0] if text else ""):
+                continue
+            try:
+                argv = shlex.split(text)
+            except ValueError:
+                continue
+            if argv and argv not in commands and cls._sane_argv(argv):
+                commands.append(argv)
+        return commands
 
     @staticmethod
     def _synthesize_checks(plan: ModelPlan | None, goal: str = "") -> list[AcceptanceCheck]:
@@ -1410,6 +1596,12 @@ Rules:
             if label not in seen:
                 seen.add(label)
                 checks.append(AcceptanceCheck(name=label, argv=["test", "-e", name]))
+        existing_argv = [check.argv for check in plan.acceptance_checks]
+        for argv in Engine._goal_commands(goal):
+            label = f"the order says run: {' '.join(argv)}"
+            if label not in seen and argv not in existing_argv:
+                seen.add(label)
+                checks.append(AcceptanceCheck(name=label, argv=argv, timeout=900))
         if any(check.required for check in plan.acceptance_checks):
             plan.acceptance_checks = [*plan.acceptance_checks, *checks]
             return checks
@@ -1523,7 +1715,9 @@ Rules:
         for action in plan.actions:
             if action.kind == ActionKind.PATCH and action.patch.strip():
                 mutation_seen = True
-            elif action.kind == ActionKind.CREATE and action.path and action.content:
+            elif action.kind == ActionKind.CREATE and action.path:
+                # Content may still be empty here: the coder fills it at
+                # execution time. The order is what this check is about.
                 mutation_seen = True
             elif not mutation_seen:
                 commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
@@ -1531,6 +1725,63 @@ Rules:
                     problems.append(f"validation action before first mutation: {action.id}")
                     break
         return "invalid plan: " + "; ".join(problems) if problems else ""
+
+    #: Commands that only make sense on a file that is already there. `rm
+    #: remove-stegosuite.sh` for a script nobody wrote is the observed case.
+    _CONSUMES_EVERY_OPERAND = {"rm", "cat", "head", "tail", "wc", "unlink", "rmdir"}
+    _CONSUMES_FIRST_OPERAND = {"python3", "python", "bash", "sh", "node", "ruby", "perl"}
+    _FILE_LIKE = re.compile(r"^[\w][\w./ -]*\.[A-Za-z0-9]{1,5}$")
+
+    def _phantom_failure(self, plan: ModelPlan | None) -> str:
+        """Reject a plan that acts on files that do not exist and that no
+        earlier step of the same plan creates. The executor would fail the
+        same way, but its "No such file" told the planner nothing it acted
+        on; this names the phantom and says what the folder really holds."""
+
+        if plan is None:
+            return ""
+        created: set[str] = set()
+        phantoms: list[str] = []
+        for action in plan.actions:
+            if action.kind == ActionKind.CREATE and action.path:
+                created.add(str(Path(action.cwd or ".") / action.path))
+                continue
+            if action.kind == ActionKind.PATCH:
+                continue
+            commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
+            for argv in commands:
+                if not argv:
+                    continue
+                executable = Path(argv[0]).name
+                operands = [token for token in argv[1:] if not token.startswith("-")]
+                if executable in self._CONSUMES_EVERY_OPERAND:
+                    candidates = operands
+                elif executable in self._CONSUMES_FIRST_OPERAND:
+                    candidates = [token for token in operands[:1] if self._FILE_LIKE.match(token)]
+                else:
+                    continue
+                for token in candidates:
+                    if "://" in token or token in {".", "..", "/"}:
+                        continue
+                    relative = str(Path(action.cwd or ".") / token)
+                    if relative in created or Path(token).name in {Path(c).name for c in created}:
+                        continue
+                    target = Path(token) if Path(token).is_absolute() else self.workspace / action.cwd / token
+                    if not target.exists():
+                        phantoms.append(f"{token} (step {action.id})")
+        if not phantoms:
+            return ""
+        try:
+            here = sorted(p.name for p in self.workspace.iterdir() if not p.name.startswith("."))[:30]
+        except OSError:
+            here = []
+        return (
+            "invalid plan: it acts on files that do not exist and no earlier step creates: "
+            + ", ".join(phantoms[:6])
+            + ". The folder holds: "
+            + (", ".join(here) if here else "nothing")
+            + ". Name only files that exist or that this plan creates first."
+        )
 
     @staticmethod
     def _is_validation_command(argv: Sequence[str]) -> bool:
@@ -1634,7 +1885,7 @@ Rules:
                 id=action_id,
                 kind=ActionKind.COMMAND,
                 cwd=check.cwd,
-                argv=check.argv,
+                argv=self._ground_check_argv(check.argv, check.cwd),
                 expected=check.name,
                 blocking=check.required,
             )
@@ -1645,6 +1896,80 @@ Rules:
             if check.required and result.status != ActionStatus.OK:
                 break
         return results
+
+    def _stub_output_failure(self, task: TaskRecord) -> str:
+        """A file the order names must hold real content, not an intention.
+
+        repos.md saying "I'll search for 8 repositories" passed "exists:
+        repos.md" (2026-09-13). Existence is necessary; a placeholder body
+        is a failure the judge names, so the next plan writes the thing.
+        """
+
+        if task.request.mode != "implement":
+            return ""
+        for name in self._goal_outputs(task.request.goal):
+            path = self.workspace / name
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            lines = [line for line in text.splitlines() if line.strip()]
+            intention = re.match(r"\s*(?:i(?:'ll| will| am going to| need to)|let me|first,? i)\b", text, re.IGNORECASE)
+            if self._PLACEHOLDER.search(text) or intention or (len(lines) <= 1 and len(text) < 200):
+                return (
+                    f"{name} is a placeholder ({len(lines)} line(s), starts {text.strip()[:60]!r}); "
+                    "the order wants its real content, written from the evidence gathered"
+                )
+            unproven = self._unproven_urls(task, text)
+            if unproven:
+                return (
+                    f"{name} names {len(unproven)} URL(s) that appear in no evidence gathered by this mission: "
+                    + ", ".join(unproven[:4])
+                    + ". Write only what the searches actually returned; search again if they returned too little."
+                )
+        return ""
+
+    _URL = re.compile(r"https?://[^\s)>\]\"']+")
+
+    def _unproven_urls(self, task: TaskRecord, text: str) -> list[str]:
+        """URLs in an output that no command of this mission ever printed.
+
+        A 9B build asked for eight repositories writes eight plausible URLs
+        from memory (two of seven were 404 on 2026-09-13) even with the real
+        search results in front of it. Provenance is checked, not requested.
+        """
+
+        urls = list(dict.fromkeys(url.rstrip(".,;:") for url in self._URL.findall(text)))
+        if not urls:
+            return []
+        evidence = "\n".join(result.stdout for result in task.results if result.stdout).casefold()
+        if not evidence.strip():
+            return []  # nothing was gathered; nothing can be checked
+        unproven = []
+        for url in urls:
+            key = url.casefold()
+            repo = re.match(r"https?://github\.com/([^/]+/[^/#?]+)", key)
+            token = repo.group(1).removesuffix(".git") if repo else key
+            if token not in evidence:
+                unproven.append(url)
+        return unproven
+
+    def _ground_check_argv(self, argv: list[str], cwd: str = ".") -> list[str]:
+        """`./wordfreq sample.txt` when the binary is at target/debug/wordfreq:
+        the check meant the built program, so run the built program."""
+
+        if not argv or not argv[0].startswith("./"):
+            return argv
+        base = self.workspace / cwd
+        if (base / argv[0]).exists():
+            return argv
+        name = Path(argv[0]).name
+        for candidate in (f"target/debug/{name}", f"target/release/{name}", f"build/{name}", f"bin/{name}"):
+            if (base / candidate).is_file():
+                return [candidate, *argv[1:]]
+        return argv
 
     @staticmethod
     def _blocking_failure(task: TaskRecord, results: list[ActionResult]) -> str:
@@ -1668,17 +1993,32 @@ Rules:
             return False, "no required acceptance checks were produced"
         by_id = {result.action_id: result for result in task.check_results}
         expected_ids = [f"check-{hashlib.sha256(check.name.encode()).hexdigest()[:8]}" for check in required]
+        # The failed check comes first, with its error line: "did not run" is
+        # only the consequence of an earlier failure, and a setback message
+        # that never changes hides the progress each attempt actually made.
+        failed = [
+            f"{check.name} — {Engine._check_detail(by_id[action_id])}"
+            for check, action_id in zip(required, expected_ids)
+            if action_id in by_id and by_id[action_id].status != ActionStatus.OK
+        ]
+        if failed:
+            return False, "required checks failed: " + "; ".join(failed)
         missing = [check.name for check, action_id in zip(required, expected_ids) if action_id not in by_id]
         if missing:
             return False, "required checks did not run: " + ", ".join(missing)
-        failed = [
-            check.name
-            for check, action_id in zip(required, expected_ids)
-            if by_id[action_id].status != ActionStatus.OK
-        ]
-        if failed:
-            return False, "required checks failed: " + ", ".join(failed)
         return True, ""
+
+    @staticmethod
+    def _check_detail(result: ActionResult) -> str:
+        """The one line of a failed check's output that says why."""
+
+        text = "\n".join(part for part in (result.reason, result.stdout, result.stderr) if part)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for pattern in ("panicked at", "AssertionError", "assert", "Error", "error", "FAILED", "failed"):
+            hit = next((line for line in lines if pattern in line), "")
+            if hit:
+                return hit[:160]
+        return (lines[-1] if lines else f"exit {result.returncode}")[:160]
 
     def _failure_context(self, task: TaskRecord) -> str:
         rows = []
@@ -2081,6 +2421,12 @@ Rules:
             if not wish:
                 # A bare step: the plan's own decision, then the goal, say what it is for.
                 wish = " ".join((plan.decision or plan.summary or task.request.goal).split())[:300]
+            # "inspect: stats.py" — a read-only step that names an existing file
+            # and nothing else means read it. No model call for that.
+            if action.kind == ActionKind.INSPECT and action.path and (self.workspace / action.cwd / action.path).is_file():
+                action.argv = ["cat", action.path]
+                notes.append(f"step 'inspect {action.path}' → cat {action.path}")
+                continue
             argv = self._deterministic_argv(wish)
             if argv:
                 action.argv = argv
@@ -2118,6 +2464,47 @@ Rules:
             notes.append(f"step '{wish[:60]}' → {' '.join(argv)[:120]}")
         return notes
 
+    @staticmethod
+    def _is_technical_card(item: dict[str, Any]) -> bool:
+        """Cards about a technology help the coder; cards about how to work
+        (the task loop, experience hubs) only get copied into files."""
+
+        name = str(item.get("name") or "").casefold()
+        group = str(item.get("group") or item.get("category") or "").casefold()
+        if group in {"core-workflow", "uncategorized", "code-quality", "research-analysis"}:
+            return False
+        return not any(word in name for word in ("task-loop", "workflow", "experience", "instinct", "skill-library"))
+
+    def _cut_off(self) -> bool:
+        """Did the last generation stop because it ran out of tokens?"""
+
+        stats = getattr(self.backend, "last_stats", None)
+        return isinstance(stats, dict) and str(stats.get("done_reason") or "") == "length"
+
+    @staticmethod
+    def _unified_patch(current: str, new: str, path: str) -> str:
+        """A diff `git apply` accepts. Both sides end with a newline: a last
+        line without one gives a hunk line without one, which git calls a
+        corrupt patch (seen 2026-09-12 on a coder rewrite)."""
+
+        lines = list(
+            difflib.unified_diff(
+                current.splitlines(keepends=True),
+                new.splitlines(keepends=True),
+                fromfile=f"a/{path}",
+                tofile=f"b/{path}",
+            )
+        )
+        out: list[str] = []
+        for line in lines:
+            if line.endswith("\n"):
+                out.append(line)
+                continue
+            # A final line without a newline: say so the way git does, so the
+            # context matches the file on disk instead of "does not apply".
+            out.append(line + "\n\\ No newline at end of file\n")
+        return "".join(out)
+
     def _fill_content(self, task: TaskRecord, action: Action) -> str:
         """Write a stubbed file for real, in its own generation.
 
@@ -2153,14 +2540,7 @@ Rules:
                 action.kind = ActionKind.NOTE
                 action.content = f"{action.path} already contains the requested content"
                 return f"{action.path}: already contains the requested content"
-            patch = "".join(
-                difflib.unified_diff(
-                    current_body.splitlines(keepends=True),
-                    existing.splitlines(keepends=True),
-                    fromfile=f"a/{action.path}",
-                    tofile=f"b/{action.path}",
-                )
-            )
+            patch = self._unified_patch(current_body, existing, action.path)
             if not patch:
                 return f"blocked: could not derive a safe patch for {action.path}"
             action.kind = ActionKind.PATCH
@@ -2187,6 +2567,48 @@ Rules:
             if current_body
             else ""
         )
+        # What went wrong last time is the one thing a rewrite must know.
+        # Without it the coder produced the same invalid file three times.
+        failed = ""
+        if task.failure or task.results or task.check_results:
+            # The build error is usually in a failed *check*, not an action.
+            tail = next(
+                (
+                    "\n".join(p for p in (result.reason, result.stdout[-700:], result.stderr[-500:]) if p)
+                    for result in [
+                        *reversed(task.check_results),
+                        *reversed(getattr(self, "_last_failures", [])),
+                        *reversed(task.results),
+                    ]
+                    if result.status != ActionStatus.OK and (result.stderr or result.reason or result.stdout)
+                ),
+                "",
+            )
+            detail = "\n".join(part for part in (task.failure[:600], tail) if part)
+            if detail.strip():
+                failed = f"WHAT FAILED LAST TIME (if it concerns this file, fix exactly this):\n{detail}"
+        # Only a failure that names this file makes "the same body again" a
+        # failure; when run.js broke, an unchanged add.wat is simply correct.
+        failed_here = bool(failed) and Path(action.path).name in failed
+        # What the earlier steps found: a research file written without the
+        # search results it was meant to hold is a stub, however well phrased.
+        index = getattr(self, "_action_index", {})
+        gathered = "\n".join(
+            f"$ {' '.join(index[result.action_id].argv)}\n{result.stdout[-1500:]}"
+            for result in task.results[-10:]
+            if result.status == ActionStatus.OK
+            and result.stdout.strip()
+            and result.action_id in index
+            and index[result.action_id].argv
+        )[-5000:]
+        # The cards gear-up selected: the same reference the planner read.
+        # A .wat file written from memory was wrong twice; written next to
+        # the canonical module it is right.
+        cards = "\n\n".join(
+            f"CARD {item.get('name')}:\n{str(item.get('content') or '')[:2500]}"
+            for item in list(getattr(self, "_gear", []))
+            if item.get("content") and self._is_technical_card(item)
+        )[:5000]
         prompt = f"""
 Write the complete, finished contents of one file. Output the file body and nothing else:
 no prose, no explanation, no markdown fence.
@@ -2198,17 +2620,40 @@ CONSTRAINTS: {json.dumps(task.effective_constraints[:8])}
 PLANNER SKETCH (a hint only — replace it with the real thing):
 {existing[:1200]}
 {current}
+{failed}
+{("EVIDENCE GATHERED BY EARLIER STEPS (use these real results; never invent names, URLs or numbers):" + chr(10) + gathered) if gathered else ""}
+{("REFERENCE CARDS — examples of correct forms for this technology. They are notes, not the file; never copy a card's text or its --- header into the file:" + chr(10) + cards) if cards else ""}
 
 Requirements:
 - Real, working, complete code. Never a stub, placeholder, TODO, or "code goes here".
 - It must compile or run as written, with no missing functions you meant to add later.
 - Only the standard library unless the goal names a dependency.
 - If it is a program a person uses, it must actually be usable end to end.
+- Tests use tiny literal data (two or three items, no punctuation) so every expected value is
+  obviously right by inspection; count them before writing the assertion.
 """.strip()
         try:
+            # A file that just failed gets a thinking pass: the same 9B build
+            # that wrote it wrong from the hip usually gets it right on reflection.
             raw = self.backend.generate(
-                prompt, role="coder", think=False, timeout=max(300, task.request.timeout)
+                prompt, role="coder", think=bool(failed_here), timeout=max(300, task.request.timeout)
             )
+            if self._cut_off():
+                # The answer hit the token limit: a degenerate run of the same
+                # token, or binary data inlined as an array (run.js, 2026-09-12).
+                # A truncated file is never a file. One retry, told exactly why.
+                self._emit(task, "action", f"{action.path}: the coder ran out of room; retrying shorter", {})
+                raw = self.backend.generate(
+                    prompt
+                    + "\n\nYOUR PREVIOUS ANSWER WAS CUT OFF AT THE TOKEN LIMIT. Write a SHORT, complete file: "
+                    "no inlined binary or numeric data (read files from disk instead), no repetition, "
+                    "no long tables. Under 80 lines.",
+                    role="coder",
+                    think=False,
+                    timeout=max(300, task.request.timeout),
+                )
+                if self._cut_off():
+                    return f"blocked: the coder could not finish {action.path} within the token limit twice"
         except Exception as exc:
             return f"blocked: could not write {action.path}: {type(exc).__name__}"
         body = self._unfence(str(raw))
@@ -2218,14 +2663,9 @@ Requirements:
         if not body.strip():
             return f"blocked: the coder returned nothing for {action.path}"
         if live_path is not None and live_path.is_file():
-            patch = "".join(
-                difflib.unified_diff(
-                    current_body.splitlines(keepends=True),
-                    body.splitlines(keepends=True),
-                    fromfile=f"a/{action.path}",
-                    tofile=f"b/{action.path}",
-                )
-            )
+            patch = self._unified_patch(current_body, body, action.path)
+            if not patch and failed_here:
+                return f"blocked: the coder produced the same {action.path} that just failed; the approach must change"
             if not patch:
                 # The file already holds exactly what the coder would write.
                 # That is the goal met, not a failure to act.

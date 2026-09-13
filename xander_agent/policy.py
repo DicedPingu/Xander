@@ -264,6 +264,76 @@ def action_text(action: Action) -> str:
     return f"{action.kind} {action.path}"
 
 
+# System package managers whose mutations only work as root. `apt purge x`
+# approved by the operator and then run as the user is a permission error
+# and a wasted approval, which is exactly the loop the screenshot showed.
+ROOT_PACKAGE_MANAGERS = {"apt", "apt-get", "apt-mark", "dpkg", "nala", "dnf", "yum", "pacman", "zypper", "apk", "snap"}
+ROOT_PACKAGE_WORDS = {
+    "install",
+    "reinstall",
+    "remove",
+    "purge",
+    "autoremove",
+    "autopurge",
+    "upgrade",
+    "full-upgrade",
+    "dist-upgrade",
+    "update",
+    "refresh",
+    "hold",
+    "unhold",
+    "-i",
+    "-r",
+    "-P",
+    "--install",
+    "--remove",
+    "--purge",
+    "--configure",
+    "-S",
+    "-R",
+    "-Rns",
+    "-Syu",
+    "-Rs",
+}
+# apt-family managers prompt "Do you want to continue? [Y/n]" and abort
+# without a terminal unless told -y. Xander always runs unattended.
+_ASSUME_YES = {"apt-get": "-y", "nala": "-y", "dnf": "-y", "yum": "-y", "zypper": "-n", "pacman": "--noconfirm"}
+
+
+def needs_root(argv: list[str]) -> bool:
+    """A system package mutation that fails as an ordinary user."""
+
+    if not argv:
+        return False
+    executable = Path(argv[0]).name
+    if executable in PRIVILEGED:
+        return False  # already elevated
+    if executable not in ROOT_PACKAGE_MANAGERS:
+        return False
+    return any(token in ROOT_PACKAGE_WORDS for token in argv[1:])
+
+
+def harden_argv(argv: list[str]) -> list[str]:
+    """Make a package command runnable unattended, as it will really run.
+
+    ``apt purge x`` becomes ``sudo -n apt-get purge -y x``: root because the
+    package database needs it, ``-n`` so a password prompt fails at once
+    instead of hanging, ``apt-get`` because ``apt`` warns it has no stable
+    scripting interface, ``-y`` because nobody is there to answer. The
+    operator approves the hardened form, so the log and the prompt agree.
+    """
+
+    if not needs_root(argv) or os.geteuid() == 0:
+        return list(argv)
+    hardened = list(argv)
+    if Path(hardened[0]).name == "apt":
+        hardened[0] = "apt-get"
+    flag = _ASSUME_YES.get(Path(hardened[0]).name)
+    if flag and flag not in hardened:
+        hardened.insert(2 if len(hardened) > 1 else 1, flag)
+    return ["sudo", "-n", *hardened]
+
+
 def _git_subcommand(argv: list[str]) -> str:
     index = 1
     options_with_values = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
@@ -480,7 +550,16 @@ def _argv_risk(argv: list[str]) -> Risk:
     if executable in PACKAGE_MANAGER_EXECUTABLES and tokens & package_mutations:
         return Risk.HIGH
     if executable == "gh":
-        return Risk.LOW if argv[1:] in (["--version"], ["auth", "status"]) else Risk.HIGH
+        if argv[1:] in (["--version"], ["auth", "status"]):
+            return Risk.LOW
+        # Reading GitHub is research, not an external write: search, view, list, GET.
+        sub = argv[1] if len(argv) > 1 else ""
+        verb = argv[2] if len(argv) > 2 else ""
+        if sub == "search" or (sub in {"repo", "issue", "pr", "release", "gist"} and verb in {"view", "list"}):
+            return Risk.LOW
+        if sub == "api" and not any(t in {"-X", "--method"} and argv[i + 1].upper() != "GET" for i, t in enumerate(argv[:-1])) and "-f" not in argv and "-F" not in argv and "--input" not in argv:
+            return Risk.LOW
+        return Risk.HIGH
     if executable == "git":
         subcommand = _git_subcommand(argv)
         if subcommand == "clone":

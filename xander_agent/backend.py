@@ -370,10 +370,15 @@ class OllamaBackend:
     def _stats(body: dict[str, Any], model: str, started: float) -> dict[str, Any]:
         tokens = int(body.get("eval_count") or 0)
         duration = int(body.get("eval_duration") or 0)
+        prompt_tokens = int(body.get("prompt_eval_count") or 0)
         return {
             "backend": "ollama",
             "model": model,
             "tokens": tokens,
+            # Prompt size next to the answer size: when their sum nears num_ctx
+            # the model is reading a truncated prompt, and no amount of
+            # re-prompting fixes that.
+            "prompt_tokens": prompt_tokens,
             "seconds": round(time.monotonic() - started, 3),
             "tokens_per_second": round(tokens / (duration / 1e9), 2) if duration else 0.0,
             "done_reason": body.get("done_reason", ""),

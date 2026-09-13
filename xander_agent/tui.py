@@ -26,8 +26,9 @@ from textual.reactive import reactive
 from textual.widgets import Input, Static
 
 from .cli import invoke_engine
+from .composer import CommandCompleter, shortcuts_card
 from .conversation import talk
-from .intents import Intent, MODE_HELP, MODE_REQUESTS, MODES, command_help, parse_intent, resolve_target
+from .intents import Intent, MODE_HELP, MODE_REQUESTS, MODES, parse_intent, resolve_target
 from .mission import MissionStore
 from .narrator import Narrator, _short
 from .power import PowerStatus, PowerZeroGuard, read_power_status
@@ -90,11 +91,12 @@ def _wheel_for(engine_mode: str, autonomy: str | None) -> str:
 
 
 class Composer(Input):
-    """The input line, with ↑/↓ history and Shift+Tab as the mode wheel."""
+    """The input line, with ↑/↓ history, tab completion, Shift+Tab as the mode wheel."""
 
     BINDINGS = [
         Binding("up", "history_back", "Previous", show=False),
         Binding("down", "history_forward", "Next", show=False),
+        Binding("tab", "complete", "Complete", show=False, priority=True),
     ]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -102,6 +104,17 @@ class Composer(Input):
         self.history: list[str] = []
         self._cursor = 0
         self._stash = ""
+        self.completer = CommandCompleter()
+
+    def action_complete(self) -> None:
+        """Tab: finish the first `/command` suggestion; otherwise do nothing."""
+
+        if not self.value.lstrip().startswith("/"):
+            return
+        completed = self.completer.complete(self.value)
+        if completed != self.value:
+            self.value = completed
+            self.cursor_position = len(self.value)
 
     def remember(self, text: str) -> None:
         if text and (not self.history or self.history[-1] != text):
@@ -215,15 +228,22 @@ class XanderApp(App[None]):
         yield Static("", id="hint")
 
     def on_mount(self) -> None:
+        composer = self.query_one("#composer", Composer)
+        try:
+            from .paths import state_dir
+
+            composer.completer = CommandCompleter(state_dir() / "composer-usage.json")
+        except Exception:
+            composer.completer = CommandCompleter()
         self._refresh_status()
         self.say(
             f"[bold]Xander[/] in [bold]{escape(str(self.workspace))}[/]  "
-            f"[dim]· plain orders run · questions get answers · /help for commands[/]",
+            f"[dim]· plain orders run · questions get answers · ? shows keys and commands[/]",
             "dim",
         )
         self._poll_power()
         self.set_interval(30, self._poll_power)
-        self.query_one("#composer", Composer).focus()
+        composer.focus()
 
     # -- feed ------------------------------------------------------------------
     def say(self, markup: str, style: str = "xander") -> Static:
@@ -260,8 +280,25 @@ class XanderApp(App[None]):
             f"[bold {_XANDER}]XANDER[/] [dim]{escape(self.variant)}[/] · {escape(_short(str(self.workspace), 70))}"
             f"{escape(repo)} · [bold]{wheel}[/] · {escape(state)}{escape(power)}"
         )
-        self.query_one("#hint", Static).update(
-            f"{wheel} — {MODE_HELP[wheel]}   ·   shift+tab mode · ↑↓ history · ctrl+c copies selection · ctrl+q quit"
+        self._refresh_hint()
+
+    def _refresh_hint(self, typed: str | None = None) -> None:
+        """The line under the composer: command suggestions while a `/` line
+        is being typed, the mode and keys otherwise."""
+
+        try:
+            hint = self.query_one("#hint", Static)
+            composer = self.query_one("#composer", Composer)
+        except Exception:
+            return  # a keystroke arriving while the screen is (un)mounting
+        value = composer.value if typed is None else typed
+        live = composer.completer.hint(value)
+        if live:
+            hint.update(f"[{_ASK}]{escape(live)}[/]")
+            return
+        wheel = _wheel_for(self.mode, self.autonomy)
+        hint.update(
+            f"{wheel} — {MODE_HELP[wheel]}   ·   ? keys · / commands · shift+tab mode · ↑↓ history · ctrl+q quit"
         )
 
     def watch_task_state(self, _: str) -> None:
@@ -269,6 +306,19 @@ class XanderApp(App[None]):
             self._refresh_status()
 
     # -- input -----------------------------------------------------------------
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Every keystroke: `?` alone opens the card, `/` shows suggestions."""
+
+        value = event.value
+        if value.strip() == "?" and self.is_mounted:
+            try:
+                self.query_one("#composer", Composer).value = ""
+            except Exception:
+                return
+            self.action_help()
+            return
+        self._refresh_hint(value)
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if self.task_state == "power-zero":
             return
@@ -277,7 +327,12 @@ class XanderApp(App[None]):
         composer.value = ""
         if not value:
             return
+        if value == "?":
+            self.action_help()
+            return
         composer.remember(value)
+        if value.startswith("/"):
+            composer.completer.record(value)
         self.say_you(value)
         self.handle_line(value)
 
@@ -453,17 +508,14 @@ class XanderApp(App[None]):
             self.say(f"[{_WARN}]{escape(name)} is gone — there are no tabs any more; everything is here[/]", "warn")
 
     def action_help(self) -> None:
-        lines = ["[bold]Commands[/]"]
-        lines += [f"  {escape(line)}" for line in command_help("core")]
-        lines += [
-            "  /history — recent missions here · /show <id> — one mission's evidence",
-            "  /todo [task] — list or pin a TODO · /todo run — work them one by one",
-            "  /pause /resume /stop /fresh /clear /desktop /values",
-            "[bold]Keys[/]  shift+tab cycles ask/plan/build/yolo · ↑↓ composer history · "
-            "mouse-select then ctrl+c copies · esc back to the composer · ctrl+q quits",
-            "[bold]Plain language[/]  create/do/make… runs · a question gets an answer · "
-            "'this project is going to be…' opens a discussion",
-        ]
+        """The shortcuts card: keys, modes, every command (live registry), plain-language rules."""
+
+        lines = []
+        for line in shortcuts_card():
+            if line and not line.startswith(" "):
+                lines.append(f"[bold]{escape(line)}[/]")
+            else:
+                lines.append(escape(line))
         self.say("\n".join(lines), "dim")
 
     def action_cycle_mode(self) -> None:
@@ -796,6 +848,8 @@ class XanderApp(App[None]):
             helpers = [h for h in data.get("delegates") or [] if h != "local execution"]
             return (f"[dim]with {escape(', '.join(helpers))}[/]", "dim") if helpers else ("", "dim")
         if kind == "research":
+            if data.get("gear"):
+                return f"[dim]· {escape(_short(message, 160))}[/]", "dim"
             sources = data.get("sources") or []
             return (f"[dim]read {len(sources)} source(s)[/]", "dim") if sources else ("", "dim")
         return "", "dim"

@@ -1,6 +1,29 @@
 # Xander — who changed what. Newest on top. Every AI that touches him adds an entry and signs it.
 # Format:  date  ·  who  ·  what changed (files)  ·  how it was proven
 
+2026-09-13 · Claude Opus 5 (Claude Code) · branch worktree-missions-and-shortcuts
+  - xander_agent/composer.py (new) + tui.py: `?` shows the shortcuts card (keys, modes, every registered
+    command); `/` shows suggestions ranked by use under the composer, tab completes; usage counts in
+    state/composer-usage.json so commands added later appear on their own.
+  - xander_agent/policy.py + executor.py: `apt purge x` approved once and run as
+    `sudo -n apt-get purge -y x` (the operator sees that form); reading GitHub (gh search/view/list/GET) LOW.
+  - xander_agent/engine.py: gear-up step in SET_UP (missing tools installed through the executor before
+    the first plan; skill cards read by the coder too); plans that act on files nothing created are
+    rejected with the folder's real contents; a plan seen at any earlier attempt is a repeat; ModelPlan
+    schema requires actions/acceptance_checks (the 9B build otherwise stopped after the prose); commands
+    the order names ("run cargo test") are checks the planner cannot drop; the coder sees the last failed
+    check, thinks on a retry, and a cut-off generation is retried then blocked; coder rewrites become
+    git-applicable patches (No-newline markers); depends_on labels resolve to the step they name; the
+    judge names the failing check and its error line; `xander run --yes` for unattended runs.
+  - xander_agent/research.py: an install/remove order gets "how it is installed" evidence (dpkg/snap/pip/flatpak).
+  - xander_agent/models.py: `steering` is a valid event type (typing mid-run no longer killed the mission).
+  - ASKAR/shared/skills/webassembly-text: the .wat forms, wat2wasm, node loader.
+  - ~/SPQR/XanderGrounds cleaned to missions only; `000 - first drills/01..08` with the order and proof
+    per subfolder (old contents in ~/SPQR/XanderGrounds.old-2026-09-12).
+  Proven by: tests/ 385 passed; drills on qwenpaw: 08 fix-the-bug (2 attempts), 05 wasm (1), 02 read the
+  web (6), 03 python snake (1), 04 rust wordfreq (2), 07 github research (6; all 8 URLs resolve, all from his
+  own gh search output) completed; 01 needs the operator (sudo), 06 own TUI needs an edit action: see .todo.
+
 2026-09-12 · Claude Opus 5 (Claude Code) · branch worktree-discussion-first-commands
   - xander_agent/tui.py rewritten: one feed of selectable Static entries + one composer; no tabs, no
     loop rail, no controls form; ↑↓ history; every typed line echoed; mid-run lines → engine steering.

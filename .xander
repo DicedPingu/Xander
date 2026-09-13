@@ -43,12 +43,22 @@ supposed to be. `.todo` says what is next. `.changes` says who changed what. `.f
    installs are asked once per project session (yes / no / yes-and-don't-ask-again).
 9. **Use other AIs well.** Codex, Claude, Gemini and friends work *on* Xander so he can do the
    work himself. They never do his missions for him. Each signs `.changes`.
+10. **Gear up before the work.** After analysing an order and before the first action he upgrades
+    himself for it: installs the tool it needs (asked once), loads the matching skill cards, and
+    the coder writes next to those cards. What he learns on a mission becomes a card for the next.
+11. **Proof is not his to drop.** A command the order names ("run cargo test") is an acceptance
+    check whatever the plan says; a file the order names must exist afterwards.
 
-## What is true today (2026-09-12)
+## What is true today (2026-09-13)
 
 - One-line file orders: instant, no model, no prompt (arena: 4/4, judge 10/10).
-- Grouping files by type, answering venting: pass. Coding a script and running it, hidden
-  browser fetch, folder watching: being fixed — see `.todo`.
-- Model: `qwenpaw-9b-heretic` for every role; `qwen3.5-9b-ultra-heretic` (4/100 refusals)
-  under benchmark as its replacement.
-- Interface: single view. Tabs, the loop rail, the controls form are gone.
+- Fixing a bug in an existing file and proving it with pytest: pass (2 attempts). A hand-written
+  WebAssembly module compiled and run from node: pass (1 attempt). Rust cargo project: builds and
+  runs, his own unit test still asserts wrong counts — see `.todo`. Hidden browser fetch, folder
+  watching: being fixed.
+- Package removal: `apt purge x` is approved once and run as `sudo -n apt-get purge -y x`.
+- Model: `qwenpaw-9b-heretic` for every role; `qwen3.5-9b-ultra-heretic` rejected (empty plans).
+- Interface: single view. `?` shows keys and commands; `/` suggests commands ranked by use, tab
+  completes. Tabs, the loop rail, the controls form are gone.
+- Training grounds: `SPQR/XanderGrounds/000 - first drills/` holds the eight tasks of 2026-09-12,
+  one subfolder each, with the order and the proof in its `.folder`.

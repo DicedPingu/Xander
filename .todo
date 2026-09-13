@@ -8,7 +8,13 @@
       returns plans with ZERO actions under the JSON schema (0/4 arena, 2/3 probe runs) — unusable as
       planner until the plan schema is simplified for it. Pull Qwythos-9B (11/100, KL 0.012, tool-tuned)
       when HF stops rate-limiting (429) and benchmark it: `xander --variant <name> arena`.
-- [ ] Planner output: bound the `why`/`summary` fields (the model rambles 15k chars and truncates the JSON).
+- [ ] XanderGrounds/000 - first drills: 01 purge stegosuite needs the operator to launch it (sudo):
+      `xander run "Purge stegosuite from this machine completely and prove it is gone." --workspace
+      "~/SPQR/XanderGrounds/000 - first drills/01 - purge stegosuite" --yes`.
+      06 own TUI /version (`xander self improve`) fails on "patch actions without a unified patch body":
+      the 9B build cannot write a diff and intents.py/tui.py are too big to rewrite whole. Needs an
+      `edit` action (search/replace blocks) in models/executor and the coder prompt.
+      02 web, 03 snake, 04 rust, 05 wasm, 07 github research (8 real URLs), 08 fix-the-bug pass.
 - [ ] A compact machine map of any project (not human-readable) he can load instead of the code.
 - [ ] Deliver the first practical missions in `.xander` (GitHub profile, Codewars kata, Android app).
 - [ ] Bounded URL/repo crawling with provenance (research-2026-09-10.md §2) and a browser tool (§3).
@@ -23,6 +29,12 @@
 - [ ] Give him more features, another window where I can see more details++
 
 DONE
+- 2026-09-13  "?" shows the shortcuts card; "/" suggests commands ranked by use, tab completes (composer.py)
+- 2026-09-13  gear-up before work: missing tools installed through the executor; the coder reads the skill cards
+- 2026-09-13  package commands run as root and unattended after one approval; phantom-file plans rejected;
+              A,B,A replans stopped; plans always carry actions; the coder sees the last failure and thinks
+              on a retry; commands the order names ("run cargo test") are proof he cannot drop; `xander run --yes`
+- 2026-09-13  planner prose fields bounded (summary/decision/why/expected word caps)
 - 2026-09-12  /new-project → SPQR/XanderWorld/NNN - name/ with a .folder; every finished mission leaves a .folder
 - 2026-09-12  one feed, one composer, no tabs; copy with ctrl+c; ↑↓ history; mid-run messages reach him
 - 2026-09-12  small orders run directly; workspace writes need no approval; venting is conversation
