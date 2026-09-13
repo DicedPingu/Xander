@@ -1184,6 +1184,9 @@ Rules:
   Cargo.toml + src/main.rs), built with ["cargo","build"] and proven with ["cargo","test"] or by
   running the binary from target/debug/. WebAssembly from text: CREATE a .wat file, then
   ["wat2wasm","name.wat","-o","name.wasm"], then run it from a small node script with WebAssembly.instantiate.
+- When a check fails inside a file that exists, the next plan fixes THAT file (CREATE with its full
+  corrected content). Never add a second file that does the same job, and never add a second test
+  file next to a failing one: one program, one test file, corrected in place.
 - `actions` is the plan. It is never empty in implement mode: at least the change and the proof.
   Prose fields stay short (`summary` ≤ 20 words, `decision` ≤ 25, `why` ≤ 40, each `expected` ≤ 15)
   so the room goes to `content`, `patch` and `argv`.
@@ -1828,7 +1831,7 @@ Rules:
                 id=action_id,
                 kind=ActionKind.COMMAND,
                 cwd=check.cwd,
-                argv=check.argv,
+                argv=self._ground_check_argv(check.argv, check.cwd),
                 expected=check.name,
                 blocking=check.required,
             )
@@ -1839,6 +1842,21 @@ Rules:
             if check.required and result.status != ActionStatus.OK:
                 break
         return results
+
+    def _ground_check_argv(self, argv: list[str], cwd: str = ".") -> list[str]:
+        """`./wordfreq sample.txt` when the binary is at target/debug/wordfreq:
+        the check meant the built program, so run the built program."""
+
+        if not argv or not argv[0].startswith("./"):
+            return argv
+        base = self.workspace / cwd
+        if (base / argv[0]).exists():
+            return argv
+        name = Path(argv[0]).name
+        for candidate in (f"target/debug/{name}", f"target/release/{name}", f"build/{name}", f"bin/{name}"):
+            if (base / candidate).is_file():
+                return [candidate, *argv[1:]]
+        return argv
 
     @staticmethod
     def _blocking_failure(task: TaskRecord, results: list[ActionResult]) -> str:
@@ -2375,6 +2393,8 @@ Requirements:
 - It must compile or run as written, with no missing functions you meant to add later.
 - Only the standard library unless the goal names a dependency.
 - If it is a program a person uses, it must actually be usable end to end.
+- Tests use tiny literal data (two or three items, no punctuation) so every expected value is
+  obviously right by inspection; count them before writing the assertion.
 """.strip()
         try:
             # A file that just failed gets a thinking pass: the same 9B build

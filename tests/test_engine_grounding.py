@@ -307,3 +307,24 @@ def test_unified_patch_marks_missing_final_newlines_the_way_git_does(tmp_path: P
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     check = subprocess.run(["git", "apply", "--check", "p.patch"], cwd=tmp_path, capture_output=True, text=True)
     assert check.returncode == 0, check.stderr
+
+
+def test_reading_github_is_not_privileged() -> None:
+    from xander_agent.models import Risk
+    from xander_agent.policy import _argv_risk
+
+    assert _argv_risk(["gh", "search", "repos", "local llm agent", "--limit", "5"]) == Risk.LOW
+    assert _argv_risk(["gh", "repo", "view", "owner/name"]) == Risk.LOW
+    assert _argv_risk(["gh", "api", "repos/o/n"]) == Risk.LOW
+    assert _argv_risk(["gh", "api", "-X", "POST", "repos/o/n/issues"]) == Risk.HIGH
+    assert _argv_risk(["gh", "pr", "create"]) == Risk.HIGH
+    assert _argv_risk(["gh", "repo", "delete", "x"]) == Risk.HIGH
+
+
+def test_a_check_on_a_built_binary_finds_it_under_target(tmp_path: Path) -> None:
+    (tmp_path / "target" / "debug").mkdir(parents=True)
+    (tmp_path / "target" / "debug" / "wordfreq").write_text("", encoding="utf-8")
+    engine = _engine(tmp_path, ScriptedBackend([]))
+    assert engine._ground_check_argv(["./wordfreq", "sample.txt"]) == ["target/debug/wordfreq", "sample.txt"]
+    assert engine._ground_check_argv(["./missing"]) == ["./missing"]
+    assert engine._ground_check_argv(["cargo", "test"]) == ["cargo", "test"]

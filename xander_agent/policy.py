@@ -550,7 +550,16 @@ def _argv_risk(argv: list[str]) -> Risk:
     if executable in PACKAGE_MANAGER_EXECUTABLES and tokens & package_mutations:
         return Risk.HIGH
     if executable == "gh":
-        return Risk.LOW if argv[1:] in (["--version"], ["auth", "status"]) else Risk.HIGH
+        if argv[1:] in (["--version"], ["auth", "status"]):
+            return Risk.LOW
+        # Reading GitHub is research, not an external write: search, view, list, GET.
+        sub = argv[1] if len(argv) > 1 else ""
+        verb = argv[2] if len(argv) > 2 else ""
+        if sub == "search" or (sub in {"repo", "issue", "pr", "release", "gist"} and verb in {"view", "list"}):
+            return Risk.LOW
+        if sub == "api" and not any(t in {"-X", "--method"} and argv[i + 1].upper() != "GET" for i, t in enumerate(argv[:-1])) and "-f" not in argv and "-F" not in argv and "--input" not in argv:
+            return Risk.LOW
+        return Risk.HIGH
     if executable == "git":
         subcommand = _git_subcommand(argv)
         if subcommand == "clone":
