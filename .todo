@@ -7,9 +7,13 @@
       returns plans with ZERO actions under the JSON schema (0/4 arena, 2/3 probe runs) — unusable as
       planner until the plan schema is simplified for it. Pull Qwythos-9B (11/100, KL 0.012, tool-tuned)
       when HF stops rate-limiting (429) and benchmark it: `xander --variant <name> arena`.
-- [ ] XanderGrounds/000 - first drills: 01 purge stegosuite (needs the operator to launch it: sudo),
-      04 rust wordfreq (his own unit test keeps asserting wrong counts), 06 own TUI /version
-      (`xander self improve`) — finish these; 05 wasm, 08 fix-the-bug pass.
+- [ ] XanderGrounds/000 - first drills: 01 purge stegosuite needs the operator to launch it (sudo):
+      `xander run "Purge stegosuite from this machine completely and prove it is gone." --workspace
+      "~/SPQR/XanderGrounds/000 - first drills/01 - purge stegosuite" --yes`.
+      06 own TUI /version (`xander self improve`) fails on "patch actions without a unified patch body":
+      the 9B build cannot write a diff and intents.py/tui.py are too big to rewrite whole. Needs an
+      `edit` action (search/replace blocks) in models/executor and the coder prompt.
+      02 web, 03 snake, 04 rust, 05 wasm, 08 fix-the-bug pass; 07 github: see .changes.
 - [ ] A compact machine map of any project (not human-readable) he can load instead of the code.
 - [ ] Deliver the first practical missions in `.xander` (GitHub profile, Codewars kata, Android app).
 - [ ] Bounded URL/repo crawling with provenance (research-2026-09-10.md §2) and a browser tool (§3).

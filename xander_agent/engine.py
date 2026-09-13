@@ -693,7 +693,7 @@ class Engine:
                 )
 
             self._phase(task, Phase.JUDGE_LOG, "independent deterministic judgment")
-            success, failure = self._judge(task, checks, blocking_failure)
+            success, failure = self._judge(task, checks, blocking_failure or self._stub_output_failure(task))
             if success and self._squad.master:
                 verdict = self._delegate(
                     task,
@@ -1843,6 +1843,33 @@ Rules:
                 break
         return results
 
+    def _stub_output_failure(self, task: TaskRecord) -> str:
+        """A file the order names must hold real content, not an intention.
+
+        repos.md saying "I'll search for 8 repositories" passed "exists:
+        repos.md" (2026-09-13). Existence is necessary; a placeholder body
+        is a failure the judge names, so the next plan writes the thing.
+        """
+
+        if task.request.mode != "implement":
+            return ""
+        for name in self._goal_outputs(task.request.goal):
+            path = self.workspace / name
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            lines = [line for line in text.splitlines() if line.strip()]
+            intention = re.match(r"\s*(?:i(?:'ll| will| am going to| need to)|let me|first,? i)\b", text, re.IGNORECASE)
+            if self._PLACEHOLDER.search(text) or intention or (len(lines) <= 1 and len(text) < 200):
+                return (
+                    f"{name} is a placeholder ({len(lines)} line(s), starts {text.strip()[:60]!r}); "
+                    "the order wants its real content, written from the evidence gathered"
+                )
+        return ""
+
     def _ground_check_argv(self, argv: list[str], cwd: str = ".") -> list[str]:
         """`./wordfreq sample.txt` when the binary is at target/debug/wordfreq:
         the check meant the built program, so run the built program."""
@@ -2366,6 +2393,15 @@ Rules:
         # Only a failure that names this file makes "the same body again" a
         # failure; when run.js broke, an unchanged add.wat is simply correct.
         failed_here = bool(failed) and Path(action.path).name in failed
+        # What the earlier steps found: a research file written without the
+        # search results it was meant to hold is a stub, however well phrased.
+        gathered = "\n".join(
+            f"$ {' '.join(result_action.argv)}\n{result.stdout[-1500:]}"
+            for result in task.results[-8:]
+            if result.status == ActionStatus.OK and result.stdout.strip()
+            for result_action in [next((a for a in (task.plan.actions if task.plan else []) if a.id == result.action_id), None)]
+            if result_action is not None and result_action.argv
+        )[-5000:]
         # The cards gear-up selected: the same reference the planner read.
         # A .wat file written from memory was wrong twice; written next to
         # the canonical module it is right.
@@ -2386,6 +2422,7 @@ PLANNER SKETCH (a hint only — replace it with the real thing):
 {existing[:1200]}
 {current}
 {failed}
+{("EVIDENCE GATHERED BY EARLIER STEPS (use these real results; never invent names, URLs or numbers):" + chr(10) + gathered) if gathered else ""}
 {("REFERENCE CARDS — examples of correct forms for this technology. They are notes, not the file; never copy a card's text or its --- header into the file:" + chr(10) + cards) if cards else ""}
 
 Requirements:

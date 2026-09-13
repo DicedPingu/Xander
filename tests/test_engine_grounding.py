@@ -328,3 +328,16 @@ def test_a_check_on_a_built_binary_finds_it_under_target(tmp_path: Path) -> None
     assert engine._ground_check_argv(["./wordfreq", "sample.txt"]) == ["target/debug/wordfreq", "sample.txt"]
     assert engine._ground_check_argv(["./missing"]) == ["./missing"]
     assert engine._ground_check_argv(["cargo", "test"]) == ["cargo", "test"]
+
+
+def test_a_goal_named_output_that_is_only_an_intention_fails_the_judgment(tmp_path: Path) -> None:
+    engine = _engine(tmp_path, ScriptedBackend([]))
+    from xander_agent.models import XanderRequest
+
+    task = engine.task_store.create(XanderRequest(mode="implement", workspace=tmp_path, goal="write the findings to repos.md"))
+    (tmp_path / "repos.md").write_text("I'll search for 8 repositories across the required categories.", encoding="utf-8")
+    assert "placeholder" in engine._stub_output_failure(task)
+    (tmp_path / "repos.md").write_text("## a/b\nhttps://example.com/a/b\nA tool.\nTake the loop.\n\n## c/d\n...\n", encoding="utf-8")
+    assert "placeholder" in engine._stub_output_failure(task), "an ellipsis stub is still a stub"
+    (tmp_path / "repos.md").write_text("## a/b\nhttps://example.com/a/b\nA tool.\nTake the loop.\n", encoding="utf-8")
+    assert engine._stub_output_failure(task) == ""
