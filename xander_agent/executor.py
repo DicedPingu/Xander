@@ -13,6 +13,7 @@ from typing import Callable
 
 from .models import Action, ActionKind, ActionResult, ActionStatus, WorkspaceSnapshot, utc_now
 from .policy import (
+    apply_edit_blocks,
     approval_reason,
     changed_paths,
     harden_argv,
@@ -122,6 +123,8 @@ class ActionExecutor:
                 return self._patch(action, started)
             if action.kind == ActionKind.CREATE:
                 return self._create(action, started)
+            if action.kind == ActionKind.EDIT:
+                return self._edit(action, started)
             if action.kind == ActionKind.NOTE:
                 return self._result(action, ActionStatus.OK, started, stdout=action.content or action.expected)
             return self._result(action, ActionStatus.FAILED, started, reason="unsupported action kind")
@@ -311,6 +314,31 @@ class ActionExecutor:
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("x", encoding="utf-8", newline="") as handle:
             handle.write(action.content)
+        return self._result(
+            action,
+            ActionStatus.OK,
+            started,
+            returncode=0,
+            changed_paths=[str(destination.relative_to(self.workspace))],
+        )
+
+    def _edit(self, action: Action, started: str) -> ActionResult:
+        if not action.path:
+            return self._result(action, ActionStatus.FAILED, started, reason="missing edit path")
+        if not action.edits:
+            return self._result(action, ActionStatus.FAILED, started, reason="edit action has no search/replace blocks")
+        destination = resolve_inside(self.workspace, action.path)
+        if not destination.is_file():
+            return self._result(action, ActionStatus.FAILED, started, reason=f"edit target does not exist: {action.path}")
+        self._validate_preimages(action, [destination])
+        before = destination.read_text(encoding="utf-8")
+        try:
+            after = apply_edit_blocks(before, action.edits)
+        except ValueError as exc:
+            return self._result(action, ActionStatus.FAILED, started, reason=str(exc))
+        if after == before:
+            return self._result(action, ActionStatus.FAILED, started, reason="edit made no change")
+        destination.write_text(after, encoding="utf-8")
         return self._result(
             action,
             ActionStatus.OK,

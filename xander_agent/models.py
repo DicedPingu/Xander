@@ -57,6 +57,7 @@ class ActionKind(StrEnum):
     PIPELINE = "pipeline"
     PATCH = "patch"
     CREATE = "create"
+    EDIT = "edit"
     NOTE = "note"
 
 
@@ -74,6 +75,22 @@ class Risk(StrEnum):
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+
+
+class EditBlock(StrictModel):
+    """A search/replace pair for an EDIT action. `search` must appear exactly
+    once in the target file; that is how a 9B coder can change one region of
+    a large file (tui.py, engine.py) without rewriting or diffing it whole."""
+
+    search: str
+    replace: str
+
+    @field_validator("search")
+    @classmethod
+    def search_is_not_empty(cls, value: str) -> str:
+        if not value:
+            raise ValueError("edit search text cannot be empty")
+        return value
 
 
 class AcceptanceCheck(StrictModel):
@@ -112,11 +129,19 @@ class Action(StrictModel):
     path: str = Field(
         default="",
         description=(
-            "Target path relative to the exact workspace; only for create actions. "
-            "Missing parent directories are created automatically."
+            "Target path relative to the exact workspace; for create and edit actions. "
+            "Missing parent directories are created automatically for create."
         ),
     )
     content: str = ""
+    edits: list[EditBlock] = Field(
+        default_factory=list,
+        description=(
+            "Search/replace blocks for edit actions, applied in order. Each `search` must "
+            "match the existing file exactly once; empty or ambiguous. Use edit instead of "
+            "patch or create to change one region of a file that already exists."
+        ),
+    )
     expected: str = ""
     acceptance_check: str | None = None
     blocking: bool = True

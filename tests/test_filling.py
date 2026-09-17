@@ -6,7 +6,7 @@ import pytest
 
 from xander_agent.engine import Engine, _substantive
 from xander_agent.executor import ActionExecutor
-from xander_agent.models import Action, ActionKind, ModelPlan, TaskRecord, XanderRequest
+from xander_agent.models import Action, ActionKind, EditBlock, ModelPlan, TaskRecord, XanderRequest
 from xander_agent.policy import snapshot_workspace
 
 
@@ -18,6 +18,16 @@ class _Coder:
     def generate(self, prompt, **kwargs):
         self.calls.append(prompt)
         return self.body
+
+
+class _EditCoder:
+    def __init__(self, edits: list[EditBlock]) -> None:
+        self.edits = edits
+        self.calls: list[str] = []
+
+    def generate_model(self, prompt, model_type, **kwargs):
+        self.calls.append(prompt)
+        return model_type(edits=self.edits)
 
 
 def _engine(tmp_path: Path, coder: _Coder) -> Engine:
@@ -136,7 +146,7 @@ def test_repaired_existing_file_is_applied_as_a_safe_patch(tmp_path: Path) -> No
         ],
     )
 
-    assert engine._repair_plan(task) == ["main.cpp"]
+    assert engine._repair_plan(task) == [("main.cpp", "rewrite")]
     action = task.plan.actions[0]
     note = engine._fill_content(task, action)
     result = ActionExecutor(tmp_path, snapshot_workspace(tmp_path), autonomy="full-auto").run(action)
@@ -159,7 +169,7 @@ def test_an_unexpressable_patch_becomes_a_rewrite(tmp_path: Path) -> None:
         actions=[Action(id="p1", kind=ActionKind.PATCH, path="main.cpp", patch="", expected="add the include")],
     )
 
-    assert engine._repair_plan(task) == ["main.cpp"]
+    assert engine._repair_plan(task) == [("main.cpp", "rewrite")]
     action = task.plan.actions[0]
     assert action.kind == ActionKind.CREATE and action.content == ""
 
@@ -191,3 +201,69 @@ def test_it_cannot_be_tricked_into_reading_outside_the_workspace(tmp_path: Path)
     )
     assert engine._repair_plan(task) == []
     assert task.plan.actions[0].kind == ActionKind.PATCH
+
+
+def test_an_unexpressable_patch_on_a_large_file_becomes_an_edit(tmp_path: Path) -> None:
+    """A body-less patch used to be left broken ("no unified patch body") when
+    the target was too large to rewrite whole. It becomes an edit request
+    instead, so the coder only has to locate and change one region."""
+
+    big = "line\n" * 3000  # well over the 6_000-byte rewrite ceiling
+    (tmp_path / "big.py").write_text(big, encoding="utf-8")
+    engine = _engine(tmp_path, _Coder())
+    task = _task(tmp_path)
+    task.plan = ModelPlan(
+        summary="fix one line",
+        actions=[Action(id="p1", kind=ActionKind.PATCH, path="big.py", patch="", expected="change one line")],
+    )
+
+    assert engine._repair_plan(task) == [("big.py", "edit")]
+    action = task.plan.actions[0]
+    assert action.kind == ActionKind.EDIT
+    assert action.edits == []
+
+
+def test_fill_edit_writes_a_verified_search_replace_block(tmp_path: Path) -> None:
+    (tmp_path / "big.py").write_text("a = 1\nb = 2\nc = 3\n", encoding="utf-8")
+    coder = _EditCoder([EditBlock(search="b = 2", replace="b = 20")])
+    engine = _engine(tmp_path, coder)
+    task = _task(tmp_path)
+    action = Action(id="e1", kind=ActionKind.EDIT, path="big.py", expected="update b")
+
+    note = engine._fill_edit(task, action)
+    result = ActionExecutor(tmp_path, snapshot_workspace(tmp_path), autonomy="full-auto").run(action)
+
+    assert "1 edit block" in note
+    assert result.status.value == "ok"
+    assert (tmp_path / "big.py").read_text(encoding="utf-8") == "a = 1\nb = 20\nc = 3\n"
+    assert coder.calls and "big.py" in coder.calls[0]
+
+
+def test_fill_edit_rejects_a_search_that_does_not_match(tmp_path: Path) -> None:
+    (tmp_path / "big.py").write_text("a = 1\n", encoding="utf-8")
+    coder = _EditCoder([EditBlock(search="nowhere", replace="x")])
+    engine = _engine(tmp_path, coder)
+    action = Action(id="e1", kind=ActionKind.EDIT, path="big.py", expected="update b")
+
+    note = engine._fill_edit(_task(tmp_path), action)
+
+    assert note.startswith("blocked:")
+    assert action.edits == []
+    assert (tmp_path / "big.py").read_text(encoding="utf-8") == "a = 1\n"
+
+
+def test_fill_edit_leaves_planner_supplied_edits_alone(tmp_path: Path) -> None:
+    (tmp_path / "big.py").write_text("a = 1\n", encoding="utf-8")
+    coder = _EditCoder([EditBlock(search="should not be called", replace="x")])
+    engine = _engine(tmp_path, coder)
+    action = Action(
+        id="e1",
+        kind=ActionKind.EDIT,
+        path="big.py",
+        edits=[EditBlock(search="a = 1", replace="a = 2")],
+        expected="update a",
+    )
+
+    assert engine._fill_edit(_task(tmp_path), action) == ""
+    assert coder.calls == []
+    assert action.edits[0].replace == "a = 2"

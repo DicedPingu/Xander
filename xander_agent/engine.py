@@ -25,6 +25,7 @@ from .models import (
     ActionKind,
     ActionResult,
     ActionStatus,
+    EditBlock,
     GuideStep,
     ModelPlan,
     MissionGuide,
@@ -38,6 +39,7 @@ from .models import (
     utc_now,
 )
 from .policy import (
+    apply_edit_blocks,
     changed_paths,
     classify_risk,
     contains_secret_path,
@@ -495,8 +497,9 @@ class Engine:
                 try:
                     task.plan = self._plan(task, selected_skills, failure=planning_failure)
                     planning_failure = ""
-                    for path in self._repair_plan(task):
-                        self._emit(task, "action", f"will rewrite {path} instead of patching it", {})
+                    for path, verb in self._repair_plan(task):
+                        detail = "instead of patching it whole" if verb == "edit" else "instead of patching it"
+                        self._emit(task, "action", f"will {verb} {path} {detail}", {})
                 except Exception as exc:
                     planning_failure = f"planner output was unusable: {type(exc).__name__}: {exc}"[:1000]
                     task.failure = planning_failure
@@ -834,8 +837,9 @@ class Engine:
             # The same repair the first plan gets: a body-less patch on a
             # small existing file becomes a rewrite the coder fills. Replans
             # skipped this and hit "patch without a unified patch body" twice.
-            for path in self._repair_plan(task):
-                self._emit(task, "action", f"will rewrite {path} instead of patching it", {})
+            for path, verb in self._repair_plan(task):
+                detail = "instead of patching it whole" if verb == "edit" else "instead of patching it"
+                self._emit(task, "action", f"will {verb} {path} {detail}", {})
             self._last_failures = [r for r in task.check_results if r.status != ActionStatus.OK]
             task.check_results = []
             reuse_existing_plan = True
@@ -1160,8 +1164,9 @@ workspace was explicitly opened, use ASKAR/Xander/projects/<name>. An external w
 for the requested source, AI-configuration, system-configuration, or operating-system changes;
 never put Xander management files there. The one exception is a hidden `.ai-context.md`
 describing the project for whoever works here next; that is documentation, not a log. For a non-Git external workspace, do not emit a PATCH
-action: use CREATE for a missing file or an explicit command whose expected result names the
-target and proof. Package/toolchain setup requires the explicit setup policy.
+action (it applies through git): use CREATE for a missing file, EDIT for one region of an existing
+file, or an explicit command whose expected result names the target and proof. Package/toolchain
+setup requires the explicit setup policy.
 
 SETUP POLICY: {task.request.setup_policy}
 If required tooling is missing and SETUP POLICY is `allow`, make the first executable action an
@@ -1185,7 +1190,7 @@ Rules:
 - Return only the schema.
 - Every action is something the executor can perform, not a prose step or future intention.
 - Return at most 6 materially executable actions. Prefer a few complete file actions over many setup or placeholder steps.
-- If local evidence is insufficient to choose a safe edit, return one bounded discovery slice containing only INSPECT/NOTE actions. The engine will return their output once. Otherwise, for implement mode include the real PATCH, CREATE, COMMAND, or PIPELINE change before validation. Never return an empty plan or a second discovery slice.
+- If local evidence is insufficient to choose a safe edit, return one bounded discovery slice containing only INSPECT/NOTE actions. The engine will return their output once. Otherwise, for implement mode include the real PATCH, EDIT, CREATE, COMMAND, or PIPELINE change before validation. Never return an empty plan or a second discovery slice.
 - Acceptance checks supplied by the operator are run by the engine after mutations; do not duplicate them as work actions unless a changed-state diagnostic is genuinely needed.
 - Use inspect actions before uncertain edits, but omit them when no inspection is needed.
 - Every inspect or command action MUST contain a non-empty argv array whose first item is the executable. Never put its command in path, content, expected, or a shell string.
@@ -1197,13 +1202,21 @@ Rules:
 - Valid patch example — this is how you change an EXISTING file. `path` and `patch` are both REQUIRED,
   and `patch` must be a real unified diff with a/ and b/ headers and @@ hunks:
   {{"kind":"patch","cwd":".","path":"src/game.py","patch":"--- a/src/game.py\\n+++ b/src/game.py\\n@@ -1,2 +1,2 @@\\n-print('hi')\\n+print('hello')\\n","expected":"the greeting changed"}}
-- A create action without `content`, or a patch action without a unified `patch` body, is invalid and
-  will be rejected before anything runs. If you intend to write a file, write the whole file.
+- Valid edit example — this is how you change one region of an EXISTING file, especially a large one,
+  without writing a diff or the whole file. `path` and `edits` are both REQUIRED; each `search` must be
+  copied verbatim from the current file and must match exactly once, `replace` is what it becomes:
+  {{"kind":"edit","cwd":".","path":"src/game.py","edits":[{{"search":"print('hi')","replace":"print('hello')"}}],"expected":"the greeting changed"}}
+- A create action without `content`, a patch action without a unified `patch` body, or an edit action
+  without `path` and at least one `edits` block, is invalid and will be rejected before anything runs.
+  If you intend to write a whole new file, write the whole file.
 - All cwd and path values are relative to WORKSPACE (normally cwd "."); never repeat, guess, or misspell the absolute workspace path.
 - Never emit shell strings, cd commands, heredocs, interactive editors, or a command action with argv [].
-- CREATE automatically creates missing parent directories. For workspace files use CREATE or PATCH; never use mkdir, touch, cp, mv, tee, or an interpreter as a substitute for a file action.
+- CREATE automatically creates missing parent directories. For workspace files use CREATE, PATCH, or EDIT; never use mkdir, touch, cp, mv, tee, or an interpreter as a substitute for a file action.
 - FAILURE TO CORRECT is evidence, not commentary. Never repeat an action or command that just produced that failure; choose a materially different approach unless the plan first resolves its cause.
-- Existing files must change through a unified patch with a/ and b/ paths. CREATE is only for a path that does not exist.
+- Existing files must change through a unified patch, or an edit action, with paths that already exist. CREATE is only for a path that does not exist.
+- Prefer EDIT over PATCH for a large existing file (roughly 200+ lines) or when you are only changing
+  one small, clearly identifiable region: a short, exact `search` snippet is far more reliable than a
+  hand-written diff. Use PATCH only when several scattered hunks must apply together atomically.
 - Every mutating action states its expected observable result and is blocking unless genuinely optional.
 - Actions execute in listed order, so normally leave depends_on empty. If used, depends_on may contain only exact action ids declared in this same plan, never labels such as "create:path".
 - Assign a parallel_group only to independent read-only inspections that are safe to run concurrently.
@@ -1493,7 +1506,7 @@ Rules:
                 index += len(group)
                 continue
             self._emit(task, "action", f"{action.kind}: {action.expected}", {"action": action.model_dump(mode="json")})
-            filled = self._fill_content(task, action)
+            filled = self._fill_content(task, action) or self._fill_edit(task, action)
             if filled:
                 self._emit(task, "action", filled, {"action": action.model_dump(mode="json")})
             if filled.startswith("blocked:"):
@@ -1509,7 +1522,7 @@ Rules:
             if result.status == ActionStatus.OK:
                 completed_ids.add(result.action_id)
                 completed_fingerprints.add(self._action_hash(action))
-            event_type = "patch" if action.kind in {ActionKind.PATCH, ActionKind.CREATE} else "action"
+            event_type = "patch" if action.kind in {ActionKind.PATCH, ActionKind.CREATE, ActionKind.EDIT} else "action"
             self._emit(
                 task,
                 event_type,
@@ -1607,7 +1620,7 @@ Rules:
             return checks
         for action in plan.actions:
             paths: list[str] = []
-            if action.kind == ActionKind.CREATE and action.path:
+            if action.kind in {ActionKind.CREATE, ActionKind.EDIT} and action.path:
                 paths = [action.path]
             elif action.kind == ActionKind.PATCH:
                 for line in action.patch.splitlines():
@@ -1656,6 +1669,7 @@ Rules:
                 ActionKind.PIPELINE,
                 ActionKind.PATCH,
                 ActionKind.CREATE,
+                ActionKind.EDIT,
             }
             for action in plan.actions
         )
@@ -1703,6 +1717,13 @@ Rules:
         ]
         if missing_path:
             problems.append("create actions without a target path: " + ", ".join(missing_path[:6]))
+        missing_edit = [
+            action.id
+            for action in plan.actions
+            if action.kind == ActionKind.EDIT and not action.path
+        ]
+        if missing_edit:
+            problems.append("edit actions without a target path: " + ", ".join(missing_edit[:6]))
         missing_pipeline = [
             action.id
             for action in plan.actions
@@ -1714,6 +1735,8 @@ Rules:
         mutation_seen = False
         for action in plan.actions:
             if action.kind == ActionKind.PATCH and action.patch.strip():
+                mutation_seen = True
+            elif action.kind == ActionKind.EDIT and action.path:
                 mutation_seen = True
             elif action.kind == ActionKind.CREATE and action.path:
                 # Content may still be empty here: the coder fills it at
@@ -1747,6 +1770,16 @@ Rules:
                 created.add(str(Path(action.cwd or ".") / action.path))
                 continue
             if action.kind == ActionKind.PATCH:
+                continue
+            if action.kind == ActionKind.EDIT:
+                if not action.path:
+                    continue
+                relative = str(Path(action.cwd or ".") / action.path)
+                if relative in created or Path(action.path).name in {Path(c).name for c in created}:
+                    continue
+                target = self.workspace / action.cwd / action.path
+                if not target.exists():
+                    phantoms.append(f"{action.path} (step {action.id})")
                 continue
             commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
             for argv in commands:
@@ -2199,6 +2232,11 @@ Rules:
         guide.progress = f"{done}/{len(guide.todo)} complete"
         guide.updated_at = utc_now()
 
+    #: A file this big cannot be safely rewritten whole by a small coder
+    #: model (that is what CREATE's 6_000-byte ceiling already refuses), but
+    #: it can still be read once to locate a small edit inside it.
+    _EDIT_FILE_CEILING = 200_000
+
     #: Content that looks like an intention rather than an implementation.
     _PLACEHOLDER = re.compile(
         r"(?:code|implementation|logic|game|body|rest)\s+(?:goes\s+)?here\b|"
@@ -2223,18 +2261,21 @@ Rules:
             lines.pop()
         return "\n".join(lines) + "\n"
 
-    def _repair_plan(self, task: TaskRecord) -> list[str]:
+    def _repair_plan(self, task: TaskRecord) -> list[tuple[str, str]]:
         """Turn edits the planner could not express into edits it can.
 
         An 8B planner reliably knows *what* to change and can fail to emit a
         valid unified diff for it. A body-less patch on a small existing file
         becomes a rewrite request; the coder fills the body and the execution
         path turns it into a preimage-checked unified patch before applying it.
+        A body-less patch on a file too large to safely rewrite whole (tui.py,
+        engine.py) becomes an edit request instead; the coder fills in one or
+        more search/replace blocks rather than the entire file.
         """
 
         if not task.plan:
             return []
-        repaired: list[str] = []
+        repaired: list[tuple[str, str]] = []
         for action in task.plan.actions:
             if (
                 task.request.autonomy == "proposal"
@@ -2265,11 +2306,17 @@ Rules:
                 target.relative_to(self.workspace)
             except (OSError, ValueError):
                 continue
-            if not target.is_file() or target.stat().st_size > 6_000:
+            if not target.is_file():
                 continue
-            action.kind = ActionKind.CREATE
-            action.content = ""  # the coder rewrites it from the file on disk
-            repaired.append(action.path)
+            size = target.stat().st_size
+            if size <= 6_000:
+                action.kind = ActionKind.CREATE
+                action.content = ""  # the coder rewrites it from the file on disk
+                repaired.append((action.path, "rewrite"))
+            elif size <= self._EDIT_FILE_CEILING:
+                action.kind = ActionKind.EDIT
+                action.content = ""  # the coder fills action.edits from the file on disk
+                repaired.append((action.path, "edit"))
         return repaired
 
     def _prepare_proposal(self, task):
@@ -2281,7 +2328,7 @@ Rules:
         for action in task.plan.actions:
             if action.option_id and action.option_id not in selected:
                 continue
-            if action.kind not in {ActionKind.PATCH, ActionKind.CREATE}:
+            if action.kind not in {ActionKind.PATCH, ActionKind.CREATE, ActionKind.EDIT}:
                 continue
             paths = changed_paths(action, self.workspace)
             if action.path:
@@ -2315,7 +2362,7 @@ Rules:
                         prompt, role="coder", think=False, timeout=min(300, task.request.timeout)
                     )))
                     self._record_model_stats(task, "coder")
-            note = self._fill_content(task, action)
+            note = self._fill_content(task, action) or self._fill_edit(task, action)
             if note.startswith("blocked:"):
                 return note
             if action.kind == ActionKind.CREATE:
@@ -2332,6 +2379,27 @@ Rules:
                 ))
                 action.kind = ActionKind.PATCH
                 action.content = ""
+            if action.kind == ActionKind.EDIT:
+                if not action.path:
+                    return "proposal edit has no target path"
+                target = resolve_inside(self.workspace, action.path)
+                if not target.is_file():
+                    return f"proposal edit target does not exist: {action.path}"
+                if not action.edits:
+                    continue
+                relative = str(target.relative_to(self.workspace))
+                current_body = target.read_text(encoding="utf-8")
+                before = sha256_file(target)
+                if relative in action.preimage_hashes and action.preimage_hashes[relative] != before:
+                    return f"proposal preimage changed for {relative}"
+                try:
+                    new_body = apply_edit_blocks(current_body, action.edits)
+                except ValueError as exc:
+                    return f"proposal edit invalid for {action.path}: {exc}"
+                action.patch = self._unified_patch(current_body, new_body, action.path)
+                action.kind = ActionKind.PATCH
+                action.edits = []
+                action.preimage_hashes[relative] = before
             if action.kind != ActionKind.PATCH:
                 continue
             paths = changed_paths(action, self.workspace)
@@ -2366,6 +2434,11 @@ Rules:
 
     class _Argv(StrictModel):
         argv: list[str] = Field(description="the exact executable and arguments, one string per element")
+
+    class _EditPlan(StrictModel):
+        edits: list[EditBlock] = Field(
+            description="search/replace blocks; each search copied verbatim from the current file"
+        )
 
     _RUN_FILE = re.compile(
         r"\b(?:run|execute|start|launch|invoke)\b.{0,40}?(?P<file>[\w./-]+\.(?:py|sh|js|rb|pl))\b", re.IGNORECASE
@@ -2683,6 +2756,89 @@ Requirements:
         action.content = body
         self._record_model_stats(task, "coder")
         return f"{action.path}: wrote {len(body.splitlines())} lines with the coder"
+
+    def _fill_edit(self, task: TaskRecord, action: Action) -> str:
+        """Give an EDIT action its search/replace blocks, in its own generation.
+
+        The planner may name a large existing file and describe the change in
+        `expected` without writing exact `edits` — or `_repair_plan` converted
+        a body-less PATCH here because the file was too large to rewrite whole.
+        The coder reads the real file once and returns typed search/replace
+        blocks; each `search` is checked against the live file before the
+        action runs, so a bad guess is caught here rather than corrupting it.
+        """
+
+        if action.kind != ActionKind.EDIT or not action.path or action.edits:
+            return ""
+        try:
+            target = (self.workspace / action.path).resolve()
+            target.relative_to(self.workspace)
+        except (OSError, ValueError):
+            return f"blocked: edit target outside workspace: {action.path}"
+        if not target.is_file():
+            return f"blocked: edit target does not exist: {action.path}"
+        size = target.stat().st_size
+        if size > self._EDIT_FILE_CEILING:
+            return f"blocked: {action.path} is too large to edit ({size} bytes)"
+        current_body = target.read_text(encoding="utf-8", errors="replace")
+
+        failed = ""
+        if task.failure or task.results or task.check_results:
+            tail = next(
+                (
+                    "\n".join(p for p in (result.reason, result.stdout[-700:], result.stderr[-500:]) if p)
+                    for result in [
+                        *reversed(task.check_results),
+                        *reversed(getattr(self, "_last_failures", [])),
+                        *reversed(task.results),
+                    ]
+                    if result.status != ActionStatus.OK and (result.stderr or result.reason or result.stdout)
+                ),
+                "",
+            )
+            detail = "\n".join(part for part in (task.failure[:600], tail) if part)
+            if detail.strip():
+                failed = f"WHAT FAILED LAST TIME (if it concerns this file, fix exactly this):\n{detail}"
+
+        prompt = f"""
+Return one or more search/replace edits to an existing file. Each `search` must be copied
+verbatim from CURRENT FILE below and must occur exactly once; `replace` is what it becomes.
+
+FILE: {action.path}
+THIS EDIT MUST: {action.expected or "fulfil its role in the goal below"}
+OVERALL GOAL: {task.request.goal}
+CONSTRAINTS: {json.dumps(task.effective_constraints[:8])}
+{failed}
+
+CURRENT FILE:
+{current_body}
+
+Requirements:
+- `search` is copied exactly from CURRENT FILE, including indentation and line breaks. A search
+  that does not match exactly, or matches more than once, is rejected and nothing is written.
+- Keep each block to the smallest region that must change; never search for or replace the
+  entire file.
+- The result must be real, working code: no stub, placeholder, TODO, or "code goes here".
+""".strip()
+        try:
+            filled = self.backend.generate_model(
+                prompt, self._EditPlan, role="coder", timeout=max(300, task.request.timeout)
+            )
+        except Exception as exc:
+            return f"blocked: could not derive edits for {action.path}: {type(exc).__name__}"
+        self._record_model_stats(task, "coder")
+        edits = [edit for edit in filled.edits if edit.search.strip()]
+        if not edits:
+            return f"blocked: the coder returned no usable edits for {action.path}"
+        try:
+            apply_edit_blocks(current_body, edits)
+        except ValueError as exc:
+            return f"blocked: {action.path}: {exc}"
+        action.edits = edits
+        action.preimage_hashes[str(target.relative_to(self.workspace))] = hashlib.sha256(
+            current_body.encode("utf-8")
+        ).hexdigest()
+        return f"{action.path}: wrote {len(edits)} edit block(s)"
 
     def _remember_written(self, result: ActionResult) -> list[dict[str, Any]]:
         """Describe what was written, and keep it for the handoff note."""

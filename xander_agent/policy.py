@@ -6,7 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .models import Action, ActionKind, Risk, WorkspaceSnapshot
+from .models import Action, ActionKind, EditBlock, Risk, WorkspaceSnapshot
 
 
 CRITICAL_PATTERNS = (
@@ -610,7 +610,7 @@ def _argv_risk(argv: list[str]) -> Risk:
 
 
 def classify_risk(action: Action) -> Risk:
-    if action.kind in {ActionKind.PATCH, ActionKind.CREATE}:
+    if action.kind in {ActionKind.PATCH, ActionKind.CREATE, ActionKind.EDIT}:
         return max(action.risk, Risk.MEDIUM, key=_risk_rank)
     commands = action.pipeline if action.kind == ActionKind.PIPELINE else [action.argv]
     risks = [action.risk, *(_argv_risk(argv) for argv in commands if argv)]
@@ -638,8 +638,24 @@ def contains_secret_path(path: Path) -> bool:
     return bool(lowered & SECRET_PARTS) or path.name.lower().startswith(".env")
 
 
+def apply_edit_blocks(text: str, edits: list[EditBlock]) -> str:
+    """Apply search/replace blocks in order. Each `search` must match exactly
+    once in the text as it stands after the previous edit; zero or multiple
+    matches are refused rather than guessed at, since a wrong guess silently
+    corrupts the file."""
+
+    for index, edit in enumerate(edits):
+        count = text.count(edit.search)
+        if count == 0:
+            raise ValueError(f"edit {index}: search text not found")
+        if count > 1:
+            raise ValueError(f"edit {index}: search text matches {count} times, ambiguous")
+        text = text.replace(edit.search, edit.replace, 1)
+    return text
+
+
 def changed_paths(action: Action, workspace: Path) -> list[Path]:
-    if action.kind == ActionKind.CREATE and action.path:
+    if action.kind in {ActionKind.CREATE, ActionKind.EDIT} and action.path:
         return [resolve_inside(workspace, action.path)]
     if action.kind != ActionKind.PATCH:
         return []
