@@ -32,6 +32,7 @@ from .intents import Intent, MODE_HELP, MODE_REQUESTS, MODES, parse_intent, reso
 from .mission import MissionStore
 from .narrator import Narrator, _short
 from .power import PowerStatus, PowerZeroGuard, read_power_status
+from .stats import render_lines, stats_payload
 from .workboard import WorkboardStore
 
 _YOU = "#82aaff"
@@ -211,6 +212,8 @@ class XanderApp(App[None]):
         self._todo_sequence_active = False
         self._active_todo_id: str | None = None
         self._entries = 0
+        self._verbose = False
+        self._current_model = ""
         self._workboard_store = WorkboardStore()
         self._workboard = self._workboard_store.load(self.workspace)
         self.narrator = Narrator(variant=variant, workspace=self.workspace)
@@ -266,6 +269,7 @@ class XanderApp(App[None]):
         wheel = _wheel_for(self.mode, self.autonomy)
         repo = f" · {self._branch}" + (f" ~{self._dirty_count}" if self._dirty_count else "") if self._branch else ""
         power = f" · {self._power_status.label}" if self._power_status.capacity is not None else ""
+        model = f" · {self._current_model}" if self._current_model else ""
         state = {
             "idle": "ready",
             "running": "working…",
@@ -278,7 +282,7 @@ class XanderApp(App[None]):
         }.get(self.task_state, self.task_state)
         self.query_one("#status", Static).update(
             f"[bold {_XANDER}]XANDER[/] [dim]{escape(self.variant)}[/] · {escape(_short(str(self.workspace), 70))}"
-            f"{escape(repo)} · [bold]{wheel}[/] · {escape(state)}{escape(power)}"
+            f"{escape(repo)} · [bold]{wheel}[/] · {escape(state)}{escape(power)}{escape(model)}"
         )
         self._refresh_hint()
 
@@ -486,9 +490,13 @@ class XanderApp(App[None]):
         elif name == "/values":
             self.say(
                 f"[dim]clone {escape(self.variant)} · mode {escape(_wheel_for(self.mode, self.autonomy))} · "
-                f"autonomy {escape(self.autonomy or 'profile')} · workspace {escape(str(self.workspace))}[/]",
+                f"autonomy {escape(self.autonomy or 'profile')} · workspace {escape(str(self.workspace))} · "
+                f"model {escape(self._current_model or 'not yet known')} · "
+                f"verbose {'on' if self._verbose else 'off'}[/]",
                 "dim",
             )
+        elif name == "/stats":
+            self._show_stats()
         elif name == "/set":
             parts = argument.split(None, 1)
             if len(parts) == 2 and parts[0] == "mode":
@@ -502,8 +510,11 @@ class XanderApp(App[None]):
                 self.narrator = Narrator(variant=self.variant, workspace=self.workspace)
                 self._refresh_status()
                 self.say(f"[dim]clone → {escape(self.variant)}[/]", "dim")
+            elif len(parts) == 2 and parts[0] == "verbose":
+                self._verbose = parts[1].strip().casefold() in {"on", "true", "1", "yes"}
+                self.say(f"[dim]verbose → {'on' if self._verbose else 'off'}[/]", "dim")
             else:
-                self.say("[dim]/set mode|autonomy|variant <value>[/]", "dim")
+                self.say("[dim]/set mode|autonomy|variant|verbose <value>[/]", "dim")
         else:
             self.say(f"[{_WARN}]{escape(name)} is gone — there are no tabs any more; everything is here[/]", "warn")
 
@@ -792,9 +803,19 @@ class XanderApp(App[None]):
         if not isinstance(payload, dict):
             payload = {"message": str(payload)}
         self.narrator.narrate(payload)  # plain-text log twin on disk
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        if str(payload.get("type") or "") == "delegation" and data.get("operation") == "model generation":
+            model = str(data.get("model") or "")
+            if model and model != self._current_model:
+                self._current_model = model
+                self._refresh_status()
         line, style = self._render_event(payload)
         if line:
             self.say(line, style)
+        if self._verbose:
+            detail = self._render_event_detail(payload)
+            if detail:
+                self.say(detail, "dim")
 
     def _render_event(self, payload: dict[str, Any]) -> tuple[str, str]:
         """One feed line per event that carries news; silence for the rest."""
@@ -853,6 +874,46 @@ class XanderApp(App[None]):
             sources = data.get("sources") or []
             return (f"[dim]read {len(sources)} source(s)[/]", "dim") if sources else ("", "dim")
         return "", "dim"
+
+    def _render_event_detail(self, payload: dict[str, Any]) -> str:
+        """The second, fuller line shown only with /set verbose on: whatever
+        the curated line in `_render_event` trimmed or skipped, spelled out."""
+
+        kind = str(payload.get("type") or "")
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        if kind == "delegation" and data.get("operation") == "model generation":
+            role = data.get("role") or "?"
+            model = data.get("model") or "?"
+            tokens = data.get("tokens")
+            speed = data.get("tokens_per_second")
+            extra = f" · {tokens} tok" if tokens else ""
+            extra += f" · {speed} tok/s" if speed else ""
+            return f"  [dim]↳ {escape(str(role))} ran on {escape(str(model))}{extra}[/]"
+        if kind in {"action", "patch"}:
+            action = data.get("action") if isinstance(data.get("action"), dict) else {}
+            result = data.get("result") if isinstance(data.get("result"), dict) else {}
+            argv = " ".join(action.get("argv") or []) if action.get("argv") else ""
+            what = argv or action.get("path") or action.get("expected") or ""
+            out = str(result.get("stdout") or result.get("stderr") or "")
+            return f"  [dim]↳ {escape(_short(str(what), 300))}{' — ' + escape(_short(out, 400)) if out else ''}[/]"
+        if kind == "research":
+            sources = data.get("sources") or []
+            warnings = data.get("warnings") or []
+            tools = data.get("tools") or []
+            bits = []
+            if sources:
+                bits.append(f"sources: {', '.join(str(s) for s in sources[:8])}")
+            if tools:
+                bits.append(f"tools: {', '.join(str(t) for t in tools[:8])}")
+            if warnings:
+                bits.append(f"warnings: {', '.join(str(w) for w in warnings[:4])}")
+            return f"  [dim]↳ {escape(_short(' · '.join(bits), 400))}[/]" if bits else ""
+        if kind == "plan":
+            steps = data.get("actions") or data.get("steps") or []
+            if isinstance(steps, list) and steps:
+                return f"  [dim]↳ {escape(_short(str(steps), 400))}[/]"
+            return ""
+        return ""
 
     def _finish(self, result: dict[str, Any]) -> None:
         task = result.get("task") if isinstance(result.get("task"), dict) else {}
@@ -1076,6 +1137,14 @@ class XanderApp(App[None]):
             self.say(f"[{_BAD}]{escape(str(exc))}[/]", "bad")
             return
         self.say("\n".join(escape(line) for line in mission.summary_lines()), "dim")
+
+    def _show_stats(self) -> None:
+        try:
+            payload = stats_payload()
+        except Exception as exc:
+            self.say(f"[{_BAD}]couldn't build the scoreboard: {escape(str(exc))}[/]", "bad")
+            return
+        self.say("\n".join(render_lines(payload)), "dim")
 
     def _capture_desktop(self) -> None:
         try:

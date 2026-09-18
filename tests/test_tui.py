@@ -319,3 +319,104 @@ def test_power_zero_stops_everything_once(tmp_path: Path) -> None:
 
     asyncio.run(scenario())
     assert shutdowns == ["poweroff"]
+
+
+def test_stats_command_prints_the_scoreboard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "xander_agent.tui.stats_payload", lambda *a, **kw: {"tasks": 3, "success_rate": 1.0}
+    )
+    monkeypatch.setattr(
+        "xander_agent.tui.render_lines", lambda payload: [f"[bold]scoreboard[/] · {payload['tasks']} task(s)"]
+    )
+
+    async def scenario() -> None:
+        app = XanderApp(workspace=tmp_path)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            _type(app, "/stats")
+            await pilot.pause()
+            assert "scoreboard · 3 task(s)" in _feed_text(app)
+
+    asyncio.run(scenario())
+
+
+def test_set_verbose_toggles_and_shows_in_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+
+    async def scenario() -> None:
+        app = XanderApp(workspace=tmp_path)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            assert app._verbose is False
+            _type(app, "/set verbose on")
+            await pilot.pause()
+            assert app._verbose is True
+            _type(app, "/values")
+            await pilot.pause()
+            assert "verbose on" in _feed_text(app)
+            _type(app, "/set verbose off")
+            await pilot.pause()
+            assert app._verbose is False
+
+    asyncio.run(scenario())
+
+
+def test_model_indicator_appears_after_a_generation_event(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        app = XanderApp(workspace=tmp_path)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            assert app._current_model == ""
+            app._append_event(
+                {
+                    "type": "delegation",
+                    "message": "model completed coder work",
+                    "data": {
+                        "agent": "Xander",
+                        "role": "coder",
+                        "operation": "model generation",
+                        "status": "completed",
+                        "model": "qwen3.8-9b-heretic:latest",
+                    },
+                }
+            )
+            await pilot.pause()
+            assert app._current_model == "qwen3.8-9b-heretic:latest"
+            status = str(app.query_one("#status", Static).render())
+            assert "qwen3.8-9b-heretic:latest" in status
+
+    asyncio.run(scenario())
+
+
+def test_verbose_adds_a_detail_line_for_model_generation(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        app = XanderApp(workspace=tmp_path)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            event = {
+                "type": "delegation",
+                "message": "model completed coder work",
+                "data": {
+                    "agent": "Xander",
+                    "role": "coder",
+                    "operation": "model generation",
+                    "status": "completed",
+                    "model": "qwen3.8-9b-heretic:latest",
+                    "tokens": 128,
+                    "tokens_per_second": 12.9,
+                },
+            }
+            app._append_event(event)
+            await pilot.pause()
+            before = _feed_text(app)
+            assert "coder ran on qwen3.8-9b-heretic:latest" not in before
+
+            app._verbose = True
+            app._append_event(event)
+            await pilot.pause()
+            after = _feed_text(app)
+            assert "coder ran on qwen3.8-9b-heretic:latest" in after
+            assert "12.9 tok/s" in after
+
+    asyncio.run(scenario())

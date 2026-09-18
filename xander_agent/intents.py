@@ -131,13 +131,14 @@ COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec("/desktop", "/desktop", "take a local desktop screenshot", "command", scope="tui"),
     CommandSpec(
         "/set",
-        "/set mode|authority|setup|variant <value>",
+        "/set mode|authority|setup|variant|verbose <value>",
         "change one live value",
         "command",
         scope="tui",
         takes_argument=True,
     ),
     CommandSpec("/values", "/values", "show the live values", "command", scope="tui"),
+    CommandSpec("/stats", "/stats", "the scoreboard — tasks, success rate, models, squad", "command", scope="tui"),
 )
 
 _COMMAND_INDEX: dict[str, CommandSpec] = {}
