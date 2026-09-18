@@ -41,11 +41,10 @@ class Caliber:
 
 # One resident model. The card holds one ~6.5 GB build at a time and every
 # swap between builds is a 10-20 s stall that reads as a freeze, so every
-# chat role fires the same heretic build: Qwen3.5-based, tools + vision +
-# thinking, 32k context baked into its Modelfile. The alternatives below are
+# chat role fires the same Qwen3.8 9B heretic build. The alternatives below are
 # installed and catalogued for benchmarking, never swapped in mid-mission.
-MAIN_MODEL = "qwenpaw-9b-heretic:latest"
-ALTERNATIVE_MODELS: tuple[str, ...] = ("qwen3.8-9b-heretic:latest", "gemma4-e4b-heretic:latest")
+MAIN_MODEL = "qwen3.8-9b-heretic:latest"
+ALTERNATIVE_MODELS: tuple[str, ...] = ("qwenpaw-9b-heretic:latest", "gemma4-e4b-heretic:latest")
 
 CALIBERS: tuple[Caliber, ...] = (
     Caliber("coder", MAIN_MODEL, "precise edits, command synthesis"),

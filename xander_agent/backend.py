@@ -54,7 +54,7 @@ class OllamaBackend:
         base_url: str | None = None,
         models: dict[str, str] | None = None,
         keep_alive: str = "45s",
-        connect_timeout: int = 3,
+        connect_timeout: int = 10,
         min_available_memory_mb: int = 1800,
         max_temperature_c: int = 88,
     ) -> None:
@@ -71,7 +71,7 @@ class OllamaBackend:
     def available(self) -> bool:
         try:
             request = urllib.request.Request(f"{self.base_url}/api/version")
-            with urllib.request.urlopen(request, timeout=self.connect_timeout) as response:
+            with urllib.request.urlopen(request, timeout=min(3, self.connect_timeout)) as response:
                 return response.status == 200
         except Exception:
             return bool(self.installed_models())

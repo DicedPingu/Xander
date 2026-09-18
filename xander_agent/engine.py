@@ -1091,7 +1091,7 @@ class Engine:
             "when one exists. Do not propose file edits — this is advice, not work.",
             role=role,
             think=False,
-            timeout=min(300, task.request.timeout),
+            timeout=min(450, task.request.timeout),
         ).strip()
         self._record_model_stats(task, role)
         task.status = TaskStatus.COMPLETED
@@ -2359,7 +2359,7 @@ Rules:
                         f"CURRENT FILE:\n{target.read_text(encoding='utf-8')}"
                     )
                     action.patch = self._unfence(str(self.backend.generate(
-                        prompt, role="coder", think=False, timeout=min(300, task.request.timeout)
+                        prompt, role="coder", think=False, timeout=min(450, task.request.timeout)
                     )))
                     self._record_model_stats(task, "coder")
             note = self._fill_content(task, action) or self._fill_edit(task, action)
@@ -2524,7 +2524,8 @@ Rules:
   then this step runs it: ["python3", "watch.py"].
 """.strip()
             try:
-                filled = self.backend.generate_model(prompt, self._Argv, role="coder", timeout=120)
+                # Local 9B generation needs headroom while the GPU is under load.
+                filled = self.backend.generate_model(prompt, self._Argv, role="coder", timeout=240)
             except Exception as exc:
                 notes.append(f"could not derive a command for '{wish[:60]}': {type(exc).__name__}")
                 continue

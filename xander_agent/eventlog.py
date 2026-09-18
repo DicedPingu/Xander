@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 _TASK_ID_RE = re.compile(r"[A-Za-z0-9_-]+\Z")
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+_MAX_LOG_BYTES = 5 * 1024 * 1024
+_LOG_LOCK = threading.Lock()
 
 
 def _clean(value: Any, limit: int = 1_000) -> str:
@@ -155,8 +158,11 @@ def append_global_event(
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         for target in dict.fromkeys(targets):
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            with target.open("a", encoding="utf-8") as handle:
-                handle.write(line)
-            os.chmod(target, 0o600)
+            with _LOG_LOCK:
+                if target.exists() and target.stat().st_size + len(line.encode("utf-8")) > _MAX_LOG_BYTES:
+                    target.replace(target.with_suffix(target.suffix + ".1"))
+                with target.open("a", encoding="utf-8") as handle:
+                    handle.write(line)
+                os.chmod(target, 0o600)
     except OSError:
         return

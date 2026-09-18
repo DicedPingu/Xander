@@ -86,7 +86,7 @@ def test_every_chat_role_shares_one_resident_model() -> None:
 
 
 def test_role_order_falls_back_when_the_preferred_model_is_absent() -> None:
-    without_main = [m for m in INSTALLED if "qwenpaw" not in m]
+    without_main = [m for m in INSTALLED if m != DEFAULT_MODELS["coder"]]
     order = ordered_models("classifier", without_main)
     assert order and all(model in without_main for model in order)
 

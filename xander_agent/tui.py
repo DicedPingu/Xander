@@ -747,7 +747,7 @@ class XanderApp(App[None]):
             engine_mode or self.mode,
             goal=goal,
             autonomy=self.autonomy if self.caller == "human" else "proposal-only",
-            log_events=False,
+            log_events=True,
         )
 
     @work(thread=True, exclusive=True, group="xander-task")
