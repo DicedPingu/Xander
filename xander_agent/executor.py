@@ -331,14 +331,14 @@ class ActionExecutor:
         if not destination.is_file():
             return self._result(action, ActionStatus.FAILED, started, reason=f"edit target does not exist: {action.path}")
         self._validate_preimages(action, [destination])
-        before = destination.read_text(encoding="utf-8")
+        before = destination.read_bytes().decode("utf-8")
         try:
             after = apply_edit_blocks(before, action.edits)
         except ValueError as exc:
             return self._result(action, ActionStatus.FAILED, started, reason=str(exc))
         if after == before:
             return self._result(action, ActionStatus.FAILED, started, reason="edit made no change")
-        destination.write_text(after, encoding="utf-8")
+        destination.write_bytes(after.encode("utf-8"))
         return self._result(
             action,
             ActionStatus.OK,

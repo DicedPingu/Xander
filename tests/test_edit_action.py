@@ -47,6 +47,11 @@ def test_apply_edit_blocks_lets_a_later_block_see_an_earlier_blocks_result() -> 
     assert result == "c\n"
 
 
+def test_apply_edit_blocks_rejects_overlapping_matches() -> None:
+    with pytest.raises(ValueError, match="ambiguous"):
+        apply_edit_blocks("aaa", [EditBlock(search="aa", replace="b")])
+
+
 # --- policy: risk and changed_paths ---
 
 
@@ -99,6 +104,32 @@ def test_executor_refuses_an_ambiguous_search(tmp_path: Path) -> None:
     assert result.status == ActionStatus.FAILED
     assert "ambiguous" in result.reason
     assert (tmp_path / "a.py").read_text(encoding="utf-8") == "x = 1\nx = 1\n"
+
+
+def test_executor_preserves_crlf_outside_the_edit(tmp_path: Path) -> None:
+    target = tmp_path / "a.py"
+    target.write_bytes(b"x = 1\r\ny = 2\r\n")
+    action = Action(kind=ActionKind.EDIT, path="a.py", edits=[EditBlock(search="x = 1", replace="x = 3")])
+
+    result = ActionExecutor(tmp_path, snapshot_workspace(tmp_path), autonomy="full-auto").run(action)
+
+    assert result.status == ActionStatus.OK
+    assert target.read_bytes() == b"x = 3\r\ny = 2\r\n"
+
+
+def test_executor_does_not_write_when_a_later_block_fails(tmp_path: Path) -> None:
+    target = tmp_path / "a.py"
+    original = b"x = 1\r\ny = 2\r\n"
+    target.write_bytes(original)
+    action = Action(kind=ActionKind.EDIT, path="a.py", edits=[
+        EditBlock(search="x = 1", replace="x = 3"),
+        EditBlock(search="missing", replace="z = 4"),
+    ])
+
+    result = ActionExecutor(tmp_path, snapshot_workspace(tmp_path), autonomy="full-auto").run(action)
+
+    assert result.status == ActionStatus.FAILED
+    assert target.read_bytes() == original
 
 
 def test_executor_refuses_to_edit_a_missing_file(tmp_path: Path) -> None:

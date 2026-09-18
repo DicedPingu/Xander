@@ -645,11 +645,12 @@ def apply_edit_blocks(text: str, edits: list[EditBlock]) -> str:
     corrupts the file."""
 
     for index, edit in enumerate(edits):
-        count = text.count(edit.search)
-        if count == 0:
+        first = text.find(edit.search)
+        if first < 0:
             raise ValueError(f"edit {index}: search text not found")
-        if count > 1:
-            raise ValueError(f"edit {index}: search text matches {count} times, ambiguous")
+        # str.count skips overlapping matches (for example, "aa" in "aaa").
+        if text.find(edit.search, first + 1) >= 0:
+            raise ValueError(f"edit {index}: search text matches 2 times or more, ambiguous")
         text = text.replace(edit.search, edit.replace, 1)
     return text
 

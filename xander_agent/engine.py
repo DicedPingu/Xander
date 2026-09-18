@@ -2388,7 +2388,7 @@ Rules:
                 if not action.edits:
                     continue
                 relative = str(target.relative_to(self.workspace))
-                current_body = target.read_text(encoding="utf-8")
+                current_body = target.read_bytes().decode("utf-8")
                 before = sha256_file(target)
                 if relative in action.preimage_hashes and action.preimage_hashes[relative] != before:
                     return f"proposal preimage changed for {relative}"
@@ -2780,7 +2780,11 @@ Requirements:
         size = target.stat().st_size
         if size > self._EDIT_FILE_CEILING:
             return f"blocked: {action.path} is too large to edit ({size} bytes)"
-        current_body = target.read_text(encoding="utf-8", errors="replace")
+        current_bytes = target.read_bytes()
+        try:
+            current_body = current_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"blocked: edit target is not UTF-8 text: {action.path}"
 
         failed = ""
         if task.failure or task.results or task.check_results:
@@ -2836,7 +2840,7 @@ Requirements:
             return f"blocked: {action.path}: {exc}"
         action.edits = edits
         action.preimage_hashes[str(target.relative_to(self.workspace))] = hashlib.sha256(
-            current_body.encode("utf-8")
+            current_bytes
         ).hexdigest()
         return f"{action.path}: wrote {len(edits)} edit block(s)"
 

@@ -1,10 +1,12 @@
 """The plan decides what the files are; the coder decides what is in them."""
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from xander_agent.engine import Engine, _substantive
+from xander_agent.backend import Backend
 from xander_agent.executor import ActionExecutor
 from xander_agent.models import Action, ActionKind, EditBlock, ModelPlan, TaskRecord, XanderRequest
 from xander_agent.policy import snapshot_workspace
@@ -30,10 +32,10 @@ class _EditCoder:
         return model_type(edits=self.edits)
 
 
-def _engine(tmp_path: Path, coder: _Coder) -> Engine:
+def _engine(tmp_path: Path, coder: _Coder | _EditCoder) -> Engine:
     engine = Engine.__new__(Engine)
     engine.workspace = tmp_path.resolve()
-    engine.backend = coder
+    engine.backend = cast(Backend, coder)
     engine._record_model_stats = lambda *a, **k: None
     return engine
 
@@ -267,3 +269,18 @@ def test_fill_edit_leaves_planner_supplied_edits_alone(tmp_path: Path) -> None:
     assert engine._fill_edit(_task(tmp_path), action) == ""
     assert coder.calls == []
     assert action.edits[0].replace == "a = 2"
+
+
+def test_fill_edit_preserves_crlf_and_hashes_exact_bytes(tmp_path: Path) -> None:
+    target = tmp_path / "a.py"
+    target.write_bytes(b"a = 1\r\nb = 2\r\n")
+    coder = _EditCoder([EditBlock(search="a = 1", replace="a = 3")])
+    engine = _engine(tmp_path, coder)
+    action = Action(id="e1", kind=ActionKind.EDIT, path="a.py", expected="update a")
+
+    note = engine._fill_edit(_task(tmp_path), action)
+    result = ActionExecutor(tmp_path, snapshot_workspace(tmp_path), autonomy="full-auto").run(action)
+
+    assert "1 edit block" in note
+    assert result.status.value == "ok", result.reason
+    assert target.read_bytes() == b"a = 3\r\nb = 2\r\n"
