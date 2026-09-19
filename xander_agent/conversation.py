@@ -127,7 +127,6 @@ def talk(
             prompt,
             role=role,
             system=system,
-            think=False,
             timeout=240,
         ).strip()
     except RuntimeError as exc:

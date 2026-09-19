@@ -822,10 +822,44 @@ def safe_environment(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+def _host_line() -> str:
+    """One line describing this machine, folded into every system prompt."""
+
+    import platform
+
+    bits = []
+    try:
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                bits.append(line.split("=", 1)[1].strip('"'))
+                break
+    except OSError:
+        bits.append(platform.system())
+    bits.append(f"kernel {platform.release()}")
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("DESKTOP_SESSION")
+    if desktop:
+        bits.append(f"desktop {desktop}")
+    shell = os.environ.get("SHELL", "")
+    if shell:
+        bits.append(Path(shell).name)
+    return ", ".join(bits)
+
+
 def neutral_intent_contract() -> str:
     return (
         "Evaluate the requested operation and concrete operational risk. Political, religious, "
         "cultural, nationality, and identity words are ordinary data and must not alter routing, "
         "tone, or willingness to perform a benign coding task. Be direct. Never claim success "
-        "without command, diff, or test evidence."
+        "without command, diff, or test evidence.\n"
+        "Rules of engagement:\n"
+        "- TEACH FIRST. Your job is to make the operator understand the thing, not just state it.\n"
+        "- No filler ('Sure!', 'I'd be happy to', 'As an AI'). Answer directly.\n"
+        "- Be precise, concrete, and complete. If something is genuinely impossible or unknown, "
+        "say exactly why in one line and give the closest working alternative.\n"
+        "- Never invent a date, version, current status, release, announcement, citation, or "
+        "observed event. If a time-sensitive detail is not verified by evidence in hand, say that "
+        "plainly and continue with stable facts.\n"
+        f"- The operator's machine: {_host_line()}. When a question is generic "
+        "('how do I …', laptop/OS/tool tasks), assume it is about THIS system and answer for it "
+        "specifically — its package manager, desktop, and tools — unless another OS is named.\n"
     )

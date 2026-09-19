@@ -333,7 +333,36 @@ def test_resume_gets_fresh_attempts_after_a_terminal_planner_failure(tmp_path: P
     assert resumed["task"]["attempt"] > attempts_before
 
 
-def test_completed_read_only_learning_stays_in_memory_not_an_authored_skill(tmp_path: Path) -> None:
+def test_completed_read_only_learning_records_a_lesson_and_authors_a_skill(tmp_path: Path) -> None:
+    class TrackingSkills(StubSkills):
+        def __init__(self) -> None:
+            self.promotions = 0
+
+        def record_experience(self, *args, **kwargs):
+            self.promotions += 1
+            return {"name": "recorded-skill"}
+
+    skills = TrackingSkills()
+    engine = Engine(
+        workspace=tmp_path,
+        backend=ScriptedBackend([]),
+        task_store=TaskStore(root=tmp_path / "tasks"),
+        skill_registry=skills,
+        researcher=StubResearcher(),
+        memory=MemoryStore(path=tmp_path / "memory.json"),
+    )
+
+    result = engine.execute(mode="research", goal="inspect the architecture", caller="human")
+
+    assert result["ok"] is True
+    assert result["task"]["lesson"]
+    # research/inspect/answer tasks never run acceptance checks, so a completed
+    # one is verified by having produced a lesson at all -- it should still
+    # write a durable skill card, not just an in-memory lesson line.
+    assert skills.promotions == 1
+
+
+def test_author_skills_off_constraint_suppresses_skill_authoring(tmp_path: Path) -> None:
     class TrackingSkills(StubSkills):
         def __init__(self) -> None:
             self.promotions = 0
@@ -352,7 +381,12 @@ def test_completed_read_only_learning_stays_in_memory_not_an_authored_skill(tmp_
         memory=MemoryStore(path=tmp_path / "memory.json"),
     )
 
-    result = engine.execute(mode="research", goal="inspect the architecture", caller="human")
+    result = engine.execute(
+        mode="research",
+        goal="inspect the architecture",
+        caller="human",
+        constraints=["author_skills=off: record lessons only; do not author or update skill cards this run."],
+    )
 
     assert result["ok"] is True
     assert result["task"]["lesson"]

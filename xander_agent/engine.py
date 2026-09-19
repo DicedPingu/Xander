@@ -958,9 +958,18 @@ class Engine:
         has_verified_check = any(
             result.status == ActionStatus.OK for result in task.check_results
         )
+        # research/inspect/answer tasks never run acceptance checks, so they can
+        # never satisfy has_verified_check; a completed one with real findings
+        # is verified by having produced a lesson at all.
+        is_research_mode = task.request.mode in {"inspect", "research", "answer"}
+        skill_authoring_off = any(
+            c.startswith("author_skills=off") for c in task.effective_constraints
+        )
         record = (
             getattr(self.skills, "record_experience", None)
-            if task.status == TaskStatus.COMPLETED and has_verified_check
+            if task.status == TaskStatus.COMPLETED
+            and (has_verified_check or is_research_mode)
+            and not skill_authoring_off
             else None
         )
         if callable(record):
@@ -1078,10 +1087,12 @@ class Engine:
             self._emit(task, "error", task.failure, self._result_payload(task))
             return task
         research = task.research or ResearchBundle()
+        lessons = self.memory.relevant_lessons(task.request.goal)
         reply = self.backend.generate(
             f"QUESTION: {task.request.goal}\n"
             f"WORKSPACE: {self.workspace}\n"
             f"OPERATOR PREFERENCES: {json.dumps(self.memory.preference_lines())}\n"
+            f"RELEVANT VERIFIED LESSONS: {json.dumps(lessons)}\n"
             f"LOCAL EVIDENCE:\n{research.local_context[:16_000]}\n"
             f"DOCUMENTATION:\n{research.documentation[:8_000]}\n\n"
             "Answer as the operator's capable partner: direct, concrete, grounded in "
@@ -1090,7 +1101,6 @@ class Engine:
             "a real question gets what it needs, under 250 words. Recommend a next move "
             "when one exists. Do not propose file edits — this is advice, not work.",
             role=role,
-            think=False,
             timeout=min(450, task.request.timeout),
         ).strip()
         self._record_model_stats(task, role)

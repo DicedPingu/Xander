@@ -18,6 +18,20 @@ from .policy import neutral_intent_contract
 
 __all__ = ["DEFAULT_MODELS", "OllamaBackend", "AnthropicBackend", "HybridBackend", "backend_for", "get_backend"]
 
+# The Modelfile's own num_ctx is 32768 (native window 262144); 16384 leaves
+# headroom for a large evidence block plus history without silently
+# truncating the prompt the way the old 8192 literal did.
+NUM_CTX = 16384
+
+# Planner/coder replies are diffs, plans, or whole files and need more room;
+# critic/classifier replies are prose or a label and rarely need it.
+_NUM_PREDICT_BY_ROLE = {"planner": 6144, "coder": 6144, "critic": 4096, "classifier": 1024}
+_DEFAULT_NUM_PREDICT = 3072
+
+
+def _num_predict_for(role: str) -> int:
+    return _NUM_PREDICT_BY_ROLE.get(role, _DEFAULT_NUM_PREDICT)
+
 _GENERATION_LOCK = threading.Lock()
 
 
@@ -53,7 +67,7 @@ class OllamaBackend:
         *,
         base_url: str | None = None,
         models: dict[str, str] | None = None,
-        keep_alive: str = "45s",
+        keep_alive: str = "15m",
         connect_timeout: int = 10,
         min_available_memory_mb: int = 1800,
         max_temperature_c: int = 88,
@@ -257,6 +271,7 @@ class OllamaBackend:
                         think=think,
                         on_token=on_token,
                         timeout=timeout or 900,
+                        role=role,
                     )
                     if not response.content and response.thinking and think:
                         response = self._call(
@@ -266,6 +281,7 @@ class OllamaBackend:
                             think=False,
                             on_token=on_token,
                             timeout=timeout or 900,
+                            role=role,
                         )
                     if response.content.strip():
                         self.last_stats = response.stats
@@ -310,6 +326,7 @@ class OllamaBackend:
         think: bool | str,
         on_token: Callable[[str], None] | None,
         timeout: int,
+        role: str = "coder",
     ) -> ModelResponse:
         streaming = on_token is not None
         payload: dict[str, Any] = {
@@ -320,9 +337,9 @@ class OllamaBackend:
             "think": think,
             "options": {
                 "temperature": 0.2,
-                "num_ctx": 8192,
+                "num_ctx": NUM_CTX,
                 "num_batch": 128,
-                "num_predict": 3072,
+                "num_predict": _num_predict_for(role),
             },
         }
         if schema is not None:

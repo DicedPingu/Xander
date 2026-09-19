@@ -316,5 +316,7 @@ def constraints_for(queue: LearnQueue) -> list[str]:
         lines.append(f"Standing learning mission: {queue.mission}")
     if not queue.settings.allow_network:
         lines.append("Network access is off for this run; work only from local material.")
+    if not queue.settings.author_skills:
+        lines.append("author_skills=off: record lessons only; do not author or update skill cards this run.")
     lines.extend(f"Operator restriction: {rule}" for rule in queue.restrictions[-10:])
     return lines

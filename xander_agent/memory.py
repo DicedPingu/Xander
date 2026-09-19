@@ -191,10 +191,26 @@ class MemoryStore:
                 f"and passed: {', '.join(result.action_id for result in checks[:3])}."
             )
         elif task.status == TaskStatus.COMPLETED:
-            lesson = (
-                f"For {subject}, {task.request.mode} completed with "
-                f"{len(task.evidence)} recorded evidence item(s); reuse the grounded evidence path."
-            )
+            research = task.research
+            findings = ""
+            if research and (research.documentation or research.local_context):
+                findings = " ".join((research.documentation or research.local_context).split())[:280]
+            if not findings:
+                answer_text = next(
+                    (item.get("text", "") for item in reversed(task.evidence) if item.get("kind") == "answer"),
+                    "",
+                )
+                findings = " ".join(answer_text.split())[:280]
+            if findings:
+                sources = ", ".join(research.sources[:3]) if research and research.sources else ""
+                lesson = f"For {subject}, {task.request.mode} found: {findings}"
+                if sources:
+                    lesson += f" (sources: {sources})"
+            else:
+                lesson = (
+                    f"For {subject}, {task.request.mode} completed with "
+                    f"{len(task.evidence)} recorded evidence item(s); reuse the grounded evidence path."
+                )
         else:
             failure = " ".join((task.failure or "task did not verify").split())[:240]
             lesson = (
