@@ -1,0 +1,36 @@
+# AI Services Reference
+
+## Overview
+This file documents common AI service API endpoints and configuration examples.
+
+## Services
+
+### OpenAI
+- **API Base**: https://api.openai.com/v1
+- **Models**: gpt-4, gpt-3.5-turbo, davinci
+- **Auth**: Bearer token (API key)
+
+### Anthropic
+- **API Base**: https://api.anthropic.com/v1
+- **Models**: claude-3, claude-2
+- **Auth**: Bearer token
+
+### Google Gemini
+- **API Base**: https://generativelanguage.googleapis.com/v1
+- **Models**: gemini-pro, gemini-1.5-pro
+- **Auth**: API key or OAuth
+
+### Meta Llama
+- **API Base**: https://api.llama.com/v1 (example)
+- **Models**: llama-3, llama-2
+- **Auth**: API key
+
+### Cohere
+- **API Base**: https://api.cohere.com/v1
+- **Models**: command, command-r
+- **Auth**: API key
+
+## Notes
+- Replace placeholder keys with actual credentials
+- Store sensitive keys in environment variables or secure vaults
+- Always use HTTPS for production
