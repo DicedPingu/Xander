@@ -22,9 +22,12 @@ there. No new dependencies — stdlib only.
 
 from __future__ import annotations
 
+import ast
 import json
 import math
+import re
 import sqlite3
+import textwrap
 import urllib.error
 import urllib.request
 from array import array
@@ -42,6 +45,56 @@ CREATE TABLE IF NOT EXISTS skill_vectors (
 # paper and is deliberately large: it flattens the head so that a single
 # retriever ranking something first cannot by itself decide the result.
 RRF_K = 60
+
+
+def compact_file_card(path: str, source: str) -> dict[str, Any]:
+    """Create a compact, useful summary card for a source file.
+
+    This keeps the raw file untouched while producing a short description that
+    is rich enough for fast retrieval and context assembly.
+    """
+
+    normalized = source or ""
+    cleaned = normalized.strip()
+    if not cleaned:
+        return {
+            "path": path,
+            "summary": "empty file",
+            "symbols": [],
+            "char_count": 0,
+            "compressed": True,
+        }
+
+    candidate = normalized.strip()
+    if candidate.startswith('"""') and candidate.endswith('"""'):
+        candidate = candidate[3:-3].strip()
+    if candidate.startswith("'''") and candidate.endswith("'''"):
+        candidate = candidate[3:-3].strip()
+    candidate = candidate.strip()
+
+    symbols: list[str] = []
+    try:
+        tree = ast.parse(textwrap.dedent(candidate))
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                symbols.append(node.name)
+    except SyntaxError:
+        pattern = re.compile(r"^(?:async\s+)?(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
+        symbols = pattern.findall(candidate)
+
+    text = candidate.replace("\r\n", "\n").replace("\r", "\n")
+    excerpt = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    summary = " ".join(excerpt.split())
+    if len(summary) > 220:
+        summary = summary[:217].rstrip() + "..."
+
+    return {
+        "path": path,
+        "summary": summary,
+        "symbols": symbols[:12],
+        "char_count": len(normalized),
+        "compressed": len(summary) < len(normalized),
+    }
 
 
 def ensure_schema(connection: sqlite3.Connection) -> None:

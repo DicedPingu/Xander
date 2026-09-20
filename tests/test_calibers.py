@@ -117,3 +117,31 @@ def test_task_shape_selects_the_model_role_automatically() -> None:
     assert role_for_task("research", "compare maintained options") == "critic"
     assert role_for_task("test-triage", "explain the failure") == "planner"
     assert role_for_task("implement", "add a parser", complexity=2, retry=True) == "planner"
+
+
+def test_fable5_heretic_routing_is_registered() -> None:
+    assert DEFAULT_MODELS["coder"] == "hf.co/saidutta69/lfm2.5-2.6b-fable5-coding-agent-heretic:Q4_K_M"
+    assert len(set(DEFAULT_MODELS.values())) == 1
+    assert "hf.co/saidutta69/lfm2.5-2.6b-fable5-coding-agent-heretic:Q4_K_M" in DEFAULT_MODELS["coder"]
+    assert "Mistral-Nemo-Instruct-heretic" in "hf.co/saidutta69/Mistral-Nemo-Instruct-heretic:Q4_K_M"
+
+
+def test_compact_file_card_keeps_actionable_context_small() -> None:
+    from xander_agent.semantic import compact_file_card
+
+    source = """
+    def process(items):
+        output = []
+        for item in items:
+            output.append(item.strip())
+        return output
+
+    class Session:
+        def __init__(self, data):
+            self.data = data
+    """
+    card = compact_file_card("demo.py", source)
+    assert card["path"] == "demo.py"
+    assert card["summary"]
+    assert card["symbols"]
+    assert len(card["summary"]) < len(source)

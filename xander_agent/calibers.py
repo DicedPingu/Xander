@@ -39,12 +39,16 @@ class Caliber:
     kind: str = "chat"
 
 
-# One resident model. The card holds one ~6.5 GB build at a time and every
-# swap between builds is a 10-20 s stall that reads as a freeze, so every
-# chat role fires the same Qwen3.8 9B heretic build. The alternatives below are
-# installed and catalogued for benchmarking, never swapped in mid-mission.
-MAIN_MODEL = "qwen3.8-9b-heretic:latest"
-ALTERNATIVE_MODELS: tuple[str, ...] = ("qwenpaw-9b-heretic:latest", "gemma4-e4b-heretic:latest")
+# The model fleet is intentionally conservative: one resident chat model keeps
+# the prompt path stable and fast, while the newer heretic builds are available
+# as the active resident and catalogued alternatives for benchmarking.
+MAIN_MODEL = "hf.co/saidutta69/lfm2.5-2.6b-fable5-coding-agent-heretic:Q4_K_M"
+ALTERNATIVE_MODELS: tuple[str, ...] = (
+    "hf.co/saidutta69/MiniCPM5-1B-Claude-Opus-Fable5-V2-Thinking-heretic:Q4_K_M",
+    "hf.co/saidutta69/Mistral-Nemo-Instruct-heretic:Q4_K_M",
+    "qwenpaw-9b-heretic:latest",
+    "gemma4-e4b-heretic:latest",
+)
 
 CALIBERS: tuple[Caliber, ...] = (
     Caliber("coder", MAIN_MODEL, "precise edits, command synthesis"),
@@ -54,7 +58,7 @@ CALIBERS: tuple[Caliber, ...] = (
     Caliber(
         "embedder",
         "qwen3-embedding:0.6b",
-        "vector recall; installed and catalogued, not yet wired into the engine",
+        "vector recall; compact, dedicated embedding model for dense retrieval and index backfills",
         kind="embed",
     ),
 )
