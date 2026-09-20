@@ -1,32 +1,30 @@
 # Xander — what is next (top = next). Move a line to DONE with the date when the arena proves it.
 
-- [ ] Arena: fizzbuzz / hidden-browser / watch-folder must pass on the chosen model. Then add
-      scenarios for: patching an existing file, a multi-file project, reading a URL and summarizing,
-      clicking in the operator's Chrome (bridge), self-improvement round trip.
-- [ ] Make him fully capable of browsing the web in the background.
-- [ ] Model: qwenpaw-9b-heretic stays main. qwen3.5-9b-ultra-heretic (4/100 refusals) is installed but
-      returns plans with ZERO actions under the JSON schema (0/4 arena, 2/3 probe runs) — unusable as
-      planner until the plan schema is simplified for it. Pull Qwythos-9B (11/100, KL 0.012, tool-tuned)
-      when HF stops rate-limiting (429) and benchmark it: `xander --variant <name> arena`.
-- [ ] XanderGrounds/000 - first drills: 01 purge stegosuite needs the operator to launch it (sudo):
-      `xander run "Purge stegosuite from this machine completely and prove it is gone." --workspace
-      "~/SPQR/XanderGrounds/000 - first drills/01 - purge stegosuite" --yes`.
-      06 own TUI /version (`xander self improve`) fails on "patch actions without a unified patch body":
-      the 9B build cannot write a diff and intents.py/tui.py are too big to rewrite whole. Needs an
-      `edit` action (search/replace blocks) in models/executor and the coder prompt.
-      02 web, 03 snake, 04 rust, 05 wasm, 07 github research (8 real URLs), 08 fix-the-bug pass.
-- [ ] A compact machine map of any project (not human-readable) he can load instead of the code.
+- [ ] Add scenarios for: patching an existing file, a multi-file project, reading a URL and summarizing, clicking in the operator's Chrome (bridge), self-improvement round trip.
+- [ ] Make him fully capable of browsing the web in the background, using proxies, what ever user-agent he sees fit, and a master of APIs.
+- [ ] Models: We are changing the models and how they interact with each others; the new models will be https://huggingface.co/saidutta69/MiniCPM5-1B-Claude-Opus-Fable5-V2-Thinking-heretic, https://huggingface.co/saidutta69/lfm2.5-2.6b-fable5-coding-agent-heretic, https://huggingface.co/saidutta69/Mistral-Nemo-Instruct-heretic, and one doing the embedding.
+  - [ ] Clean up in the old models that neither Monica or Xander need, nor are any useful in any other way. 
+- [ ] A compact not human-readable machine map of any project that is extremly compact, descriptive, .
 - [ ] Deliver the first practical missions in `.xander` (GitHub profile, Codewars kata, Android app).
 - [ ] Bounded URL/repo crawling with provenance (research-2026-09-10.md §2) and a browser tool (§3).
 - [ ] Durable resume: kill mid-write / mid-check / at approval and recover without duplicate effects (§11).
-- [ ] Self-update: stage → verify in a fresh process → restart at a safe boundary; rollback restores
-      only his own changes (§7).
+- [ ] Self-update: stage → verify in a safe process → restart at a safe boundary; rollback restores only if the update isn't up to par, and.
       - [ ] Update the TUI or what ever is updated on the spot after a upgrade has been tested and approved.
-- [ ] Improved what he writes to me.
+- [ ] Improved and increase how much Xander writes so it's possible possible to reconstruct everything he does by reading, also we want a shortcut (like ALT + T) that show the commands he writes too; input andn output.
 - [ ] Log everything relevant, once; keep the plain log twin readable.
 - [ ] Make Xander run in the background, with a symbol down to the right, the TUI is just a way to interact with the superviser, and any agents that are put on an unfinished task.
 - [ ] Typing "?" into the message window should display shortcuts and such, also autocomplete suggested commands that might change according to which are used, (remember that new ones can be invented on the spot) when starting with the "/".
-- [ ] Give him more features, another window where I can see more details++
+- [ ] Give him more features, still slimming him down, he needs more general abilities, and he needs to be able to adapt a lot.
+- [ ] The GUI needs a complete overhall, it's minimalistic, featureless, in the least useful way.
+- [ ] Make Xander appear in omp. 
+- [ ] Optimize the GUI.
+- [ ] Optimize the planning.
+- [ ] Optimize the researching.
+- [ ] Optimize the way things are learned.
+- [ ] Optimize how Xander works.
+- [ ] Optimize.
+- [ ] Optimize.
+- [ ] Optimize.
 
 DONE
 - 2026-09-13  "?" shows the shortcuts card; "/" suggests commands ranked by use, tab completes (composer.py)
